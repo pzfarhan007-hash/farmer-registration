@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ state.portalTitle }}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+           background: #f6f8fb; color: #1a3a5c; line-height: 1.45; }
+    .header { background: linear-gradient(135deg, #0b4d2b 0%, #197b47 100%); color: #fff; padding: 24px 28px; }
+    .header-inner { max-width: 1200px; margin: 0 auto; }
+    .header h1 { font-size: 24px; font-weight: 600; margin-bottom: 4px; }
+    .header .sub { font-size: 13px; opacity: 0.85; }
+    .header .nav { float: right; display: flex; gap: 6px; flex-wrap: wrap; }
+    .header .nav a { background: rgba(255,255,255,0.15); color: #fff;
+      padding: 6px 14px; border-radius: 6px; text-decoration: none;
+      font-size: 12px; font-weight: 600; border: 1px solid rgba(255,255,255,0.25); }
+    .header .nav a:hover { background: rgba(255,255,255,0.25); }
+    .header .nav a.primary { background: rgba(255,255,255,0.28); border-color: rgba(255,255,255,0.4); }
+    .container { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
+
+    .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+    .stat-card { background: #fff; border-radius: 10px; padding: 14px 18px;
+                 box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid #e5ebf3; }
+    .stat-card .label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+    .stat-card .value { font-size: 26px; font-weight: 700; color: #0b4d2b; margin-top: 4px; }
+    .stat-card .sub-note { font-size: 11px; color: #668; margin-top: 2px; }
+
+    .last5-strip {
+      background: linear-gradient(135deg, #eff8f0 0%, #e4f1e6 100%);
+      border: 1px solid #a9d4b0; border-radius: 10px; padding: 12px 16px; margin-bottom: 18px;
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    }
+    .last5-strip .l5-label { font-weight: 700; color: #2a6b35; font-size: 14px;
+      display: flex; align-items: center; gap: 6px; min-width: 155px; }
+    .last5-strip .l5-tiles { display: flex; flex: 1; gap: 10px; flex-wrap: wrap; }
+    .last5-strip .l5-tile { background: #fff; border: 1px solid #c7e0cc;
+      border-radius: 8px; padding: 8px 14px; min-width: 110px; text-align: center; }
+    .last5-strip .l5-tile .l5-date { font-size: 11px; color: #668; font-weight: 600; }
+    .last5-strip .l5-tile .l5-add { font-size: 20px; font-weight: 700; color: #2a6b35; }
+    .last5-strip .l5-empty { color: #668; font-size: 12px; font-style: italic; }
+
+    .date-range-bar { background: linear-gradient(135deg, #fff8ee 0%, #fef1dc 100%);
+      border: 1px solid #e8c48a; border-radius: 10px; padding: 12px 16px; margin-bottom: 18px;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 14px 20px; }
+    .date-range-bar .drb-label { font-weight: 700; color: #a86416; font-size: 14px;
+      display: flex; align-items: center; gap: 8px; }
+    .date-range-bar .drb-inputs { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .date-range-bar .drb-inputs label { display: inline-flex; align-items: center; gap: 6px;
+      font-size: 13px; color: #5a4218; font-weight: 600; }
+    .date-range-bar .drb-inputs input[type="date"] { padding: 5px 8px; border: 1px solid #d8b377;
+      border-radius: 6px; background: #fff; font-size: 13px; color: #1a3a5c; min-width: 140px; }
+    .date-range-bar .drb-reset { padding: 5px 12px; border: 1px solid #c99a4e; background: #fff;
+      color: #a86416; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
+    .date-range-bar .drb-reset:hover { background: #fdf6e8; }
+    .date-range-bar .drb-hint { font-size: 11.5px; color: #7a5820; width: 100%; margin-top: 2px; line-height: 1.4; }
+
+    .panel { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+             border: 1px solid #e5ebf3; margin-bottom: 20px; }
+    .panel-header { padding: 14px 20px; border-bottom: 1px solid #eef2f7;
+      display: flex; justify-content: space-between; align-items: baseline; }
+    .panel-header h2 { font-size: 16px; color: #0b4d2b; font-weight: 600; }
+    .badge { background: #eef2f7; color: #0b4d2b; padding: 3px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eef2f7; vertical-align: top; }
+    th { background: #f6f8fb; color: #0b4d2b; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    tbody tr.clickable { cursor: pointer; }
+    tbody tr.clickable:hover { background: #f4fff6; }
+    tfoot td { background: #f6f8fb; font-weight: 700; border-top: 2px solid #c7e0cc; }
+
+    .progress { display: inline-block; width: 100px; height: 8px; background: #eef2f7; border-radius: 4px; overflow: hidden; vertical-align: middle; margin-right: 8px; }
+    .progress-fill { display: block; height: 100%; border-radius: 4px; }
+    .pct-value { font-weight: 600; }
+    .pct-zero .progress-fill   { background: #d9d9d9; } .pct-zero   .pct-value { color: #999; }
+    .pct-low .progress-fill    { background: #e57373; } .pct-low    .pct-value { color: #c62828; }
+    .pct-medium .progress-fill { background: #ffb74d; } .pct-medium .pct-value { color: #ef6c00; }
+    .pct-good .progress-fill   { background: #66bb6a; } .pct-good   .pct-value { color: #2e7d32; }
+
+    .pct-circle { display: inline-flex; align-items: center; justify-content: center; }
+    .view { display: none; } .view.active { display: block; }
+    .nav-back { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .back-btn { background: #fff; border: 1px solid #c7e0cc; color: #0b4d2b;
+      padding: 8px 14px; border-radius: 6px; cursor: pointer;
+      font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+    .back-btn:hover { background: #f4fff6; }
+    .back-context { color: #668; font-size: 12px; }
+    footer { max-width: 1200px; margin: 20px auto; padding: 12px 20px; color: #668; font-size: 12px;
+             text-align: center; border-top: 1px solid #e5ebf3; padding-top: 20px; }
+    footer .credit { font-weight: 600; color: #0b4d2b; }
+    @media (max-width: 760px) { .summary-grid { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <div class="nav">
+      <a href="/analysis">📈 Analysis</a>
+      {% if is_admin %}
+        <a href="/upload" class="primary">⬆ Upload CSV</a>
+        <a href="/admin/month-baselines">📁 Baselines</a>
+        <a href="/admin/targets">🎯 Targets</a>
+        <a href="/admin/csv-reconciliation">🔄 Reconcile</a>
+        <a href="/logout">Logout</a>
+      {% else %}
+        <a href="/login" class="primary">🔒 Admin login</a>
+      {% endif %}
+    </div>
+    <h1>{{ state.portalTitle }}</h1>
+    <div class="sub">AGRISTACK enrollment progress · Baseline {{ state.baselineLabel }} ·
+      Latest snapshot: {{ (state.snapshotDates[-1] if state.snapshotDates else state.baselineDate) | short_date }}</div>
+  </div>
+</div>
+
+<div class="container">
+
+  {% set total_target  = state.tehsils | sum(attribute='target') %}
+  {% set total_issued  = state.tehsils | sum(attribute='issued') %}
+  {% set total_approved = state.tehsils | sum(attribute='approved') %}
+  {% set total_villages = namespace(n=0) %}
+  {% for t in state.tehsils %}{% set total_villages.n = total_villages.n + (t.villages | length) %}{% endfor %}
+  {% set total_villages = total_villages.n %}
+  {% set issue_pct     = ((total_issued / total_target * 100) | round | int) if total_target > 0 else 0 %}
+  {% set apr_pct       = ((total_approved / total_issued * 100) | round | int) if total_issued > 0 else 0 %}
+
+  <div class="summary-grid">
+    <div class="stat-card"><div class="label">Target</div>
+      <div class="value">{{ "{:,}".format(total_target) }}</div>
+      <div class="sub-note">{{ total_villages }} villages · {{ state.tehsils | length }} tehsils</div></div>
+    <div class="stat-card"><div class="label">Issued</div>
+      <div class="value">{{ "{:,}".format(total_issued) }}</div>
+      <div class="sub-note">{{ issue_pct }}% of target</div></div>
+    <div class="stat-card"><div class="label">Approved</div>
+      <div class="value">{{ "{:,}".format(total_approved) }}</div>
+      <div class="sub-note">{{ apr_pct }}% of issued</div></div>
+    <div class="stat-card"><div class="label">Pending Approval</div>
+      <div class="value">{{ "{:,}".format(total_issued - total_approved) }}</div>
+      <div class="sub-note">Issued but not yet approved</div></div>
+  </div>
+
+  <div class="last5-strip">
+    <div class="l5-label"><span>📈</span><span>Additions · last 5 days</span></div>
+    <div class="l5-tiles">
+      {% if state.last5 %}
+        {% for d in state.last5 %}
+          <div class="l5-tile">
+            <div class="l5-date">{{ d.date | short_date }}</div>
+            <div class="l5-add">{{ '+' if d.total > 0 else '' }}{{ "{:,}".format(d.total) }}</div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="l5-empty">No daily snapshots uploaded yet{% if is_admin %} — <a href="/upload">upload today's CSV</a> to begin{% endif %}.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="date-range-bar">
+    <div class="drb-label"><span>📅</span><span>Additions between</span></div>
+    <div class="drb-inputs">
+      <label>From <input type="date" id="addFrom"></label>
+      <label>To <input type="date" id="addTo"></label>
+      <button type="button" class="drb-reset" id="addResetBtn">Reset</button>
+    </div>
+    <div class="drb-hint">Drives the <b>Additions between</b> column in every table below. Baseline ({{ state.baselineLabel }}) is counted on <b>{{ state.baselineDate | short_date }}</b>.</div>
+  </div>
+
+  <div id="viewTehsil" class="view active">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Tehsil-wise Progress <small style="color:#888;font-weight:400;font-size:12px;margin-left:6px">Click a row to see villages</small></h2>
+        <span class="badge">{{ state.tehsils | length }} tehsils</span>
+      </div>
+      <div class="table-wrap">
+        <table id="tehsilTable">
+          <thead><tr>
+            <th>#</th><th>Tehsil</th>
+            <th class="num" style="white-space:normal;max-width:70px">Villages</th>
+            <th class="num" style="white-space:normal;max-width:120px">Target</th>
+            <th class="num" style="white-space:normal;max-width:95px">Total Issued</th>
+            <th>Issue %</th>
+            <th class="num" id="tehsilAddRangeHdr" style="white-space:normal;max-width:100px;background:#fff8ee;color:#a86416">Additions between</th>
+            <th class="num">Approved</th>
+            <th>Approval %</th>
+          </tr></thead>
+          <tbody></tbody><tfoot></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="viewVillage" class="view">
+    <div class="nav-back">
+      <button class="back-btn" onclick="showTehsils()"><span>←</span><span>Back to All Tehsils</span></button>
+      <div class="back-context">Villages in <b id="villageBreadcrumb"></b></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <h2 id="villageViewTitle"></h2>
+        <span class="badge" id="villageCount"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="villageTable">
+          <thead><tr>
+            <th>#</th><th>Village</th>
+            <th class="num">Target</th>
+            <th class="num">Total Issued</th>
+            <th>Issue %</th>
+            <th class="num" id="villageAddRangeHdr" style="white-space:normal;max-width:100px;background:#fff8ee;color:#a86416">Additions between</th>
+            <th class="num">Approved</th>
+            <th>Approval %</th>
+          </tr></thead>
+          <tbody></tbody><tfoot></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  {{ state.portalTitle }} · Updated {{ state.generated[:10] }}<br>
+  Developed and maintained by <span class="credit">Obaid Peerzada</span>
+</footer>
+
+<script>
+const DATA = {{ state | tojson }};
+
+function dayAfter(ymd) {
+  var p = ymd.split('-');
+  var d = new Date(Date.UTC(+p[0], +p[1]-1, +p[2]));
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0') + '-' + String(d.getUTCDate()).padStart(2,'0');
+}
+var POST_BASELINE_START = dayAfter(DATA.baselineDate || '2026-07-31');
+
+var addFrom, addTo;
+(function pickDefaultRange() {
+  var snaps = (DATA.snapshotDates || []).slice();
+  if (snaps.length >= 1) {
+    addFrom = snaps[snaps.length - 1];
+    addTo   = snaps[snaps.length - 1];
+  } else {
+    addFrom = POST_BASELINE_START;
+    addTo   = DATA.maxDate || POST_BASELINE_START;
+  }
+})();
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function pctClass(p){ return p===0?'pct-zero':p<30?'pct-low':p<70?'pct-medium':'pct-good'; }
+function pctBar(num,den){ var p=den>0?Math.round(num/den*100):0; var cls=pctClass(p); var w=Math.min(p,100);
+  return '<span class="progress"><span class="progress-fill '+cls+'" style="width:'+w+'%"></span></span><span class="pct-value">'+p+'%</span>'; }
+function pctCircle(num,den){
+  var p = den>0 ? Math.round(num/den*100) : 0;
+  var pClamped = Math.max(0, Math.min(100, p));
+  var r = 20, cx = 24, cy = 24, c = 2 * Math.PI * r;
+  var dashLen = c * pClamped / 100;
+  var stroke = p===0 ? '#c7c7c7' : p<30 ? '#d84a4a' : p<70 ? '#f0a000' : '#2a9f3f';
+  return '<div class="pct-circle" title="'+num+' of '+den+' = '+p+'%">'
+    + '<svg width="52" height="52" viewBox="0 0 48 48">'
+    +   '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="#e5ebf3" stroke-width="5"/>'
+    +   '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+stroke+'" stroke-width="5" '
+    +     'stroke-dasharray="'+dashLen.toFixed(2)+' '+c.toFixed(2)+'" '
+    +     'transform="rotate(-90 '+cx+' '+cy+')" stroke-linecap="round"/>'
+    +   '<text x="24" y="27" text-anchor="middle" dominant-baseline="middle" '
+    +     'font-size="13" font-weight="700" fill="'+stroke+'">'+p+'%</text>'
+    + '</svg></div>';
+}
+
+function villageAddInRange(v,from,to){ var dc=v.datedCounts||{}; var n=0; for(var d in dc){ if(d>=from&&d<=to) n+=(dc[d].issued||0); } return n; }
+function tehsilAddInRange(t,from,to){ var n=0; for(var i=0;i<t.villages.length;i++) n+=villageAddInRange(t.villages[i],from,to); return n; }
+var MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtShort(ymd){ if(!ymd) return ''; var p=ymd.split('-'); return parseInt(p[2],10)+' '+MONTHS[parseInt(p[1],10)-1]+" '"+p[0].slice(2); }
+function addRangeLabel(){ return fmtShort(addFrom)+' – '+fmtShort(addTo); }
+
+function renderTehsils(){
+  var body='',totAR=0;
+  var tehsils = DATA.tehsils.slice().sort(function(a,b){
+    var pa = a.target>0 ? a.issued/a.target : -1;
+    var pb = b.target>0 ? b.issued/b.target : -1;
+    return pb - pa;
+  });
+  for(var i=0;i<tehsils.length;i++){
+    var t=tehsils[i]; var ar=tehsilAddInRange(t,addFrom,addTo); totAR+=ar;
+    var safe=t.tehsil.replace(/'/g,"\\'");
+    body+='<tr class="clickable" onclick="showVillages(\''+safe+'\')">'
+        +'<td>'+(i+1)+'</td>'
+        +'<td><strong>'+esc(t.tehsil)+'</strong></td>'
+        +'<td class="num">'+t.villages.length+'</td>'
+        +'<td class="num">'+t.target.toLocaleString()+'</td>'
+        +'<td class="num"><strong>'+t.issued.toLocaleString()+'</strong></td>'
+        +'<td style="text-align:center">'+pctCircle(t.issued,t.target)+'</td>'
+        +'<td class="num" style="color:#a86416;background:#fff8ee">'+ar.toLocaleString()+'</td>'
+        +'<td class="num">'+t.approved.toLocaleString()+'</td>'
+        +'<td style="text-align:center">'+pctCircle(t.approved,t.issued)+'</td>'
+        +'</tr>';
+  }
+  var gT=0,gI=0,gA=0,gV=0;
+  for(var i=0;i<DATA.tehsils.length;i++){ var t=DATA.tehsils[i]; gT+=t.target;gI+=t.issued;gA+=t.approved;gV+=t.villages.length; }
+  document.querySelector('#tehsilTable tbody').innerHTML=body;
+  document.querySelector('#tehsilTable tfoot').innerHTML='<tr><td colspan="2">TOTAL</td>'
+    +'<td class="num">'+gV+'</td>'
+    +'<td class="num">'+gT.toLocaleString()+'</td>'
+    +'<td class="num"><strong>'+gI.toLocaleString()+'</strong></td>'
+    +'<td style="text-align:center">'+pctCircle(gI,gT)+'</td>'
+    +'<td class="num" style="color:#a86416;background:#fff8ee"><strong>'+totAR.toLocaleString()+'</strong></td>'
+    +'<td class="num">'+gA.toLocaleString()+'</td>'
+    +'<td style="text-align:center">'+pctCircle(gA,gI)+'</td></tr>';
+  var h=document.getElementById('tehsilAddRangeHdr'); if(h) h.innerHTML='Additions between<br><small style="font-weight:400;color:#a86416">'+addRangeLabel()+'</small>';
+}
+
+function renderVillages(tehsilName){
+  var t=null; for(var i=0;i<DATA.tehsils.length;i++) if(DATA.tehsils[i].tehsil===tehsilName){ t=DATA.tehsils[i]; break; }
+  if(!t) return;
+  document.getElementById('villageViewTitle').textContent='Villages in '+tehsilName;
+  document.getElementById('villageBreadcrumb').textContent=tehsilName;
+  document.getElementById('villageCount').textContent=t.villages.length+' villages';
+  var vs=t.villages.slice().sort(function(a,b){ var pa=a.target>0?a.issued/a.target:-1; var pb=b.target>0?b.issued/b.target:-1; return pb-pa; });
+  var body='',totAR=0;
+  for(var j=0;j<vs.length;j++){
+    var v=vs[j]; var ar=villageAddInRange(v,addFrom,addTo); totAR+=ar;
+    body+='<tr><td>'+(j+1)+'</td>'
+        +'<td><strong>'+esc(v.village)+'</strong></td>'
+        +'<td class="num">'+v.target.toLocaleString()+'</td>'
+        +'<td class="num"><strong>'+v.issued.toLocaleString()+'</strong></td>'
+        +'<td>'+pctBar(v.issued,v.target)+'</td>'
+        +'<td class="num" style="color:#a86416;background:#fff8ee">'+ar.toLocaleString()+'</td>'
+        +'<td class="num">'+v.approved.toLocaleString()+'</td>'
+        +'<td>'+pctBar(v.approved,v.issued)+'</td></tr>';
+  }
+  document.querySelector('#villageTable tbody').innerHTML=body;
+  document.querySelector('#villageTable tfoot').innerHTML='<tr><td colspan="2">TOTAL</td>'
+    +'<td class="num">'+t.target.toLocaleString()+'</td>'
+    +'<td class="num"><strong>'+t.issued.toLocaleString()+'</strong></td>'
+    +'<td>'+pctBar(t.issued,t.target)+'</td>'
+    +'<td class="num" style="color:#a86416;background:#fff8ee"><strong>'+totAR.toLocaleString()+'</strong></td>'
+    +'<td class="num">'+t.approved.toLocaleString()+'</td>'
+    +'<td>'+pctBar(t.approved,t.issued)+'</td></tr>';
+  var h=document.getElementById('villageAddRangeHdr'); if(h) h.innerHTML='Additions between<br><small style="font-weight:400;color:#a86416">'+addRangeLabel()+'</small>';
+}
+
+function hideAllViews(){ ['viewTehsil','viewVillage'].forEach(function(id){ document.getElementById(id).classList.remove('active'); }); }
+function showTehsils(){ hideAllViews(); document.getElementById('viewTehsil').classList.add('active'); renderTehsils(); window.scrollTo(0,0); }
+function showVillages(name){ renderVillages(name); hideAllViews(); document.getElementById('viewVillage').classList.add('active'); window.scrollTo(0,0); }
+
+document.addEventListener('keydown',function(e){
+  if(e.key!=='Escape') return;
+  if(document.getElementById('viewVillage').classList.contains('active')){ showTehsils(); return; }
+});
+
+(function(){
+  var fe=document.getElementById('addFrom'), te=document.getElementById('addTo'), rb=document.getElementById('addResetBtn');
+  var common = { dateFormat: "Y-m-d", altInput: true, altFormat: "d-m-Y",
+                 minDate: DATA.minDate, maxDate: DATA.maxDate, allowInput: true };
+  var fp1 = flatpickr(fe, Object.assign({ defaultDate: addFrom, onChange: apply }, common));
+  var fp2 = flatpickr(te, Object.assign({ defaultDate: addTo,   onChange: apply }, common));
+  function apply(){
+    var f = fe.value || DATA.minDate, t = te.value || DATA.maxDate;
+    if(t < f){ var tmp=f; f=t; t=tmp; fp1.setDate(f, false); fp2.setDate(t, false); }
+    addFrom = f; addTo = t; rerender();
+  }
+  rb.addEventListener('click', function(){
+    var toDate = DATA.maxDate && DATA.maxDate > POST_BASELINE_START ? DATA.maxDate : POST_BASELINE_START;
+    fp1.setDate(POST_BASELINE_START, false);
+    fp2.setDate(toDate, false);
+    addFrom = POST_BASELINE_START; addTo = toDate;
+    rerender();
+  });
+})();
+
+function rerender(){
+  if(document.getElementById('viewVillage').classList.contains('active')){ var b=document.getElementById('villageBreadcrumb').textContent; if(b) renderVillages(b); }
+  if(document.getElementById('viewTehsil').classList.contains('active')) renderTehsils();
+}
+
+renderTehsils();
+</script>
+</body>
+</html>

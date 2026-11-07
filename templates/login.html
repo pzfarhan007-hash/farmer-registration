@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login — {{ portal_short }}</title>
+<style>
+  body { background:#f3f6fb; color:#1f2937; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; margin:0; padding:0;
+         min-height:100vh; display:flex; align-items:center; justify-content:center; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:30px 36px; box-shadow:0 2px 12px rgba(0,0,0,.06); min-width:360px; }
+  h1 { color:#0b4d2b; margin:0 0 6px 0; font-size:20px; }
+  p.sub { color:#64748b; margin:0 0 18px 0; font-size:13px; }
+  label { display:block; font-size:12px; letter-spacing:.3px; color:#6b7280; margin:10px 0 4px; }
+  input { width:100%; padding:10px 12px; border:1px solid #d1d5db; border-radius:6px; background:#f0f7f2; font-size:15px; box-sizing:border-box; }
+  button { background:#0b4d2b; color:#fff; padding:10px 20px; border:none; border-radius:6px; font-weight:600; font-size:15px; cursor:pointer; margin-top:16px; width:100%; }
+  button:hover { background:#166534; }
+  .err { margin:10px 0 0; padding:9px 11px; border:1px solid #f5c6cb; background:#f8d7da; color:#721c24; border-radius:6px; font-size:13px; }
+</style></head><body>
+<form class="card" method="POST">
+  <h1>{{ portal_short }}</h1>
+  <p class="sub">Admin login</p>
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  <label>Username</label>
+  <input type="text" name="username" autofocus>
+  <label>Password</label>
+  <input type="password" name="password">
+  <button type="submit">Sign in</button>
+</form>
+</body></html>

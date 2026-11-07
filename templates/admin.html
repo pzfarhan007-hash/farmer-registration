@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — {{ portal_short }}</title>
+<style>
+  body { background:#f3f6fb; color:#1f2937; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; margin:0; padding:0; }
+  .wrap { max-width:1000px; margin:24px auto; padding:0 16px; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:22px 26px; box-shadow:0 1px 3px rgba(0,0,0,.04); margin-bottom:18px; }
+  .card h2, .card h3 { color:#0b4d2b; margin:0 0 10px 0; }
+  .mut { color:#4b5563; font-size:14px; }
+  .nav { background:#0b4d2b; color:#fff; padding:10px 20px; }
+  .nav a { color:#fff; text-decoration:none; margin-right:18px; font-weight:500; }
+  .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-top:16px; }
+  .link-card { display:block; text-decoration:none; background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:18px 20px; }
+  .link-card:hover { background:#f6fdf7; border-color:#86efac; }
+  .link-card .title { color:#0b4d2b; font-weight:700; font-size:16px; }
+  .link-card .desc { color:#64748b; font-size:13px; margin-top:4px; }
+</style></head><body>
+<div class="nav">
+  <a href="/">Dashboard</a>
+  <a href="/upload">Upload daily</a>
+  <a href="/admin/month-baselines">Monthly Baselines</a>
+  <a href="/admin/targets">Targets</a>
+  <a href="/admin/csv-reconciliation">CSV Reconciliation</a>
+  <a href="/logout">Logout</a>
+</div>
+
+<div class="wrap">
+<div class="card">
+  <h2>Admin — {{ portal_short }}</h2>
+  <p class="mut">
+    Current baseline: <strong>{{ baseline_label }}</strong> (cutoff {{ baseline_date }}).
+    Master list: <strong>{{ tehsils|length }}</strong> tehsils, <strong>{{ n_villages }}</strong> villages.
+  </p>
+</div>
+
+<div class="card">
+  <h3>Admin pages</h3>
+  <div class="grid">
+    <a class="link-card" href="/upload">
+      <div class="title">⬆ Upload daily snapshot</div>
+      <div class="desc">For current-month AGRISTACK exports. Daily cumulative CSV, one per day.</div>
+    </a>
+    <a class="link-card" href="/admin/month-baselines">
+      <div class="title">📁 Monthly Baselines</div>
+      <div class="desc">Upload a CSV per completed month. Close current month to lock it in.</div>
+    </a>
+    <a class="link-card" href="/admin/targets">
+      <div class="title">🎯 Village Targets</div>
+      <div class="desc">Tehsil-wise village list. Target=0 hides a village. Pick correct tehsil per row.</div>
+    </a>
+    <a class="link-card" href="/admin/csv-reconciliation">
+      <div class="title">🔄 CSV Reconciliation</div>
+      <div class="desc">Map AGRISTACK village spellings to master-list villages.</div>
+    </a>
+    <a class="link-card" href="/analysis">
+      <div class="title">📈 Analysis</div>
+      <div class="desc">Top/bottom villages, at-risk list, tehsil ranking.</div>
+    </a>
+    <a class="link-card" href="/download/xlsx">
+      <div class="title">⬇ Download XLSX</div>
+      <div class="desc">Full workbook: Tehsil summary + Village details.</div>
+    </a>
+  </div>
+</div>
+</div>
+</body></html>

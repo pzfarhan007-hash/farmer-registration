@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CSV Reconciliation — {{ portal_short }}</title>
+<style>
+  body { background:#f3f6fb; color:#1f2937; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; margin:0; padding:0; }
+  .wrap { max-width:1100px; margin:24px auto; padding:0 16px; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:22px 26px; box-shadow:0 1px 3px rgba(0,0,0,.04); margin-bottom:18px; }
+  .card h2, .card h3 { color:#0b4d2b; margin:0 0 10px 0; }
+  .mut { color:#4b5563; font-size:13px; }
+  .nav { background:#0b4d2b; color:#fff; padding:10px 20px; }
+  .nav a { color:#fff; text-decoration:none; margin-right:18px; font-weight:500; }
+  .ok { margin:12px 0; padding:10px 12px; border:1px solid #c3e6cb; background:#d4edda; color:#155724; border-radius:6px; }
+  .err { margin:12px 0; padding:10px 12px; border:1px solid #f5c6cb; background:#f8d7da; color:#721c24; border-radius:6px; }
+  table.t { width:100%; border-collapse:collapse; margin-top:8px; }
+  table.t th, table.t td { padding:8px 10px; border-bottom:1px solid #eef2f7; text-align:left; font-size:13px; vertical-align:middle; }
+  table.t th { background:#f6f8fb; color:#475569; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.3px; }
+  select.map { padding:4px 6px; border:1px solid #d1d5db; border-radius:5px; font-size:12px; min-width:220px; }
+  .btn { background:#0b4d2b; color:#fff; padding:10px 20px; border:none; border-radius:6px; font-weight:600; font-size:14px; cursor:pointer; }
+  .btn:hover { background:#166534; }
+  .save-bar { position:sticky; bottom:0; background:#fff; border-top:1px solid #e5e7eb; padding:14px 20px; display:flex; justify-content:flex-end; box-shadow:0 -2px 6px rgba(0,0,0,.05); }
+</style></head><body>
+<div class="nav">
+  <a href="/">Dashboard</a>
+  <a href="/upload">Upload daily</a>
+  <a href="/admin/month-baselines">Monthly Baselines</a>
+  <a href="/admin/targets">Targets</a>
+  <a href="/admin/csv-reconciliation">CSV Reconciliation</a>
+  <a href="/admin">Admin</a>
+</div>
+
+<div class="wrap">
+{% if saved %}<div class="ok">Saved CSV alias mappings.</div>{% endif %}
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <h2>CSV Village Reconciliation</h2>
+  <p class="mut">
+    Spelling drift between AGRISTACK CSV village names and the portal master list. Pick the correct master
+    village for each unmapped row. Leave blank to keep the row surfaced as an unknown in the Targets page.
+    Already-mapped rows can be re-pointed or cleared (select blank).
+  </p>
+</div>
+
+<form method="POST">
+
+<div class="card">
+  <h3>Unmapped CSV village names
+    <span style="color:#64748b;font-size:13px;font-weight:400">({{ unmapped|length }})</span>
+  </h3>
+  {% if unmapped %}
+    <table class="t">
+      <thead><tr>
+        <th>CSV village (as uploaded)</th><th>CSV tehsil</th><th>Map to master village</th>
+      </tr></thead>
+      <tbody>
+        {% for u in unmapped %}
+          <tr>
+            <td><strong>{{ u.raw_village }}</strong></td>
+            <td style="color:#64748b">{{ u.raw_tehsil or '—' }}</td>
+            <td>
+              <select name="map::{{ u.csv_norm }}" class="map">
+                <option value="">— leave as unknown —</option>
+                {% for n in candidates %}
+                  <option value="{{ n }}">{{ master_villages_by_norm[n][1] }} ({{ master_villages_by_norm[n][0] }})</option>
+                {% endfor %}
+              </select>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="mut">No unmapped village names. All CSV rows match the master list.</p>
+  {% endif %}
+</div>
+
+{% if mapped %}
+<div class="card">
+  <h3>Already-mapped CSV village names
+    <span style="color:#64748b;font-size:13px;font-weight:400">({{ mapped|length }})</span>
+  </h3>
+  <table class="t">
+    <thead><tr>
+      <th>CSV village</th><th>Currently maps to</th><th>Change / clear</th>
+    </tr></thead>
+    <tbody>
+      {% for m in mapped %}
+        <tr>
+          <td><strong>{{ m.raw_village }}</strong></td>
+          <td style="color:#15803d">→ {{ m.mapped_to }}</td>
+          <td>
+            <select name="map::{{ m.csv_norm }}" class="map">
+              <option value="">— clear mapping —</option>
+              {% for n in candidates %}
+                <option value="{{ n }}" {% if n == m.mapped_to %}selected{% endif %}>
+                  {{ master_villages_by_norm[n][1] }} ({{ master_villages_by_norm[n][0] }})
+                </option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="save-bar"><button type="submit" class="btn">Save mappings</button></div>
+
+</form>
+</div>
+</body></html>

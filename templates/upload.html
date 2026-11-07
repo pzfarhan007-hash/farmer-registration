@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upload daily — {{ portal_short }}</title>
+<style>
+  body { background:#f3f6fb; color:#1f2937; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; margin:0; padding:0; }
+  .wrap { max-width:980px; margin:24px auto; padding:0 16px; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:22px 26px; box-shadow:0 1px 3px rgba(0,0,0,.04); margin-bottom:18px; }
+  .card h2, .card h3 { color:#0b4d2b; margin:0 0 10px 0; }
+  .mut { color:#4b5563; }
+  .lbl { display:block; font-size:12px; letter-spacing:.5px; color:#6b7280; margin-bottom:4px; }
+  .inp { width:100%; padding:10px 12px; border:1px solid #d1d5db; border-radius:6px; background:#f0f7f2; font-size:15px; box-sizing:border-box; }
+  .inp-file { background:#fff; font-size:14px; }
+  .btn { background:#0b4d2b; color:#fff; padding:11px 20px; border:none; border-radius:6px; font-weight:600; font-size:15px; cursor:pointer; }
+  .btn:hover { background:#166534; }
+  .ok { margin:16px 0; padding:12px 14px; border:1px solid #c3e6cb; background:#d4edda; color:#155724; border-radius:6px; }
+  .err { margin:16px 0; padding:12px 14px; border:1px solid #f5c6cb; background:#f8d7da; color:#721c24; border-radius:6px; }
+  .warn { margin:12px 0; padding:12px 14px; border:1px solid #f0c674; background:#fff8e8; color:#7a5b14; border-radius:6px; }
+  .pill { padding:4px 10px; border:1px solid #cbd5e1; border-radius:999px; background:#f1f5f9; color:#334155; font-size:13px; display:inline-block; margin:2px; }
+  .nav { background:#0b4d2b; color:#fff; padding:10px 20px; }
+  .nav a { color:#fff; text-decoration:none; margin-right:18px; font-weight:500; }
+  .nav a:hover { text-decoration:underline; }
+</style></head><body>
+<div class="nav">
+  <a href="/">Dashboard</a>
+  <a href="/upload">Upload daily</a>
+  <a href="/admin/month-baselines">Monthly Baselines</a>
+  <a href="/admin/targets">Targets</a>
+  <a href="/admin/csv-reconciliation">CSV Reconciliation</a>
+  <a href="/admin">Admin</a>
+</div>
+
+<div class="wrap">
+  {% if saved %}
+    <div class="ok"><strong>Saved:</strong> {{ saved }}
+      {% if replaced_date %} &nbsp;·&nbsp; Replaced the earlier snapshot for <strong>{{ replaced_date }}</strong>.{% endif %}
+    </div>
+  {% endif %}
+  {% if error %}<div class="err"><strong>Problem:</strong> {{ error }}</div>{% endif %}
+
+  <div class="card">
+    <h2>Upload daily snapshot</h2>
+    <p class="mut">
+      Use this for days within the <strong>current month</strong>. For a completed
+      month, use <a href="/admin/month-baselines">Monthly Baselines</a> instead.
+    </p>
+    <p class="mut" style="margin-top:0;">
+      Current baseline cutoff: <strong>{{ baseline_label }}</strong>
+      (uploads must be dated after <code>{{ baseline_date }}</code>).
+    </p>
+
+    <form method="POST" enctype="multipart/form-data" id="uploadForm">
+      <div id="overwriteBox" class="warn" style="display:none;">
+        &#9888; A snapshot for <strong id="overwriteDate"></strong> already exists.
+        If you continue, that one will be replaced. The older version stays in
+        GitHub commit history and can be restored from there if needed.
+        <div style="margin-top:8px;">
+          <label style="font-weight:600; cursor:pointer;">
+            <input type="checkbox" id="confirmChk" name="confirm_overwrite" value="yes">
+            Yes, replace it
+          </label>
+        </div>
+      </div>
+
+      <div style="margin:14px 0;">
+        <label class="lbl">SNAPSHOT DATE (DD-MM-YYYY)</label>
+        <input type="text" name="date" id="dateInput" class="inp"
+               value="{{ request.form.date or '' }}" placeholder="dd-mm-yyyy">
+      </div>
+      <div style="margin:14px 0;">
+        <label class="lbl">CSV FILE</label>
+        <input type="file" name="csv" accept=".csv" class="inp inp-file">
+      </div>
+      <button type="submit" id="submitBtn" class="btn">Upload</button>
+    </form>
+  </div>
+
+  {% if existing_dates %}
+  <div class="card">
+    <h3>Current-month snapshots on file
+      <span style="font-weight:400; color:#6b7280;">({{ existing_dates|length }})</span></h3>
+    <div>
+      {% for d in existing_dates %}<span class="pill">{{ d }}</span>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+(function(){
+  var existing = {{ existing_dates|tojson }};
+  var dateInput = document.getElementById('dateInput');
+  var box = document.getElementById('overwriteBox');
+  var dateSpan = document.getElementById('overwriteDate');
+  var chk = document.getElementById('confirmChk');
+  var btn = document.getElementById('submitBtn');
+  function normDate(raw){
+    raw = (raw || '').trim();
+    var m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/); if (m) return raw;
+    m = raw.match(/^(\d{2})[./-](\d{2})[./-](\d{4})$/);
+    if (m) return m[3] + '-' + m[2] + '-' + m[1];
+    return null;
+  }
+  function refresh(){
+    var d = normDate(dateInput.value);
+    if (d && existing.indexOf(d) >= 0) {
+      box.style.display = 'block'; dateSpan.textContent = d;
+      btn.textContent = chk.checked ? 'Upload (replace existing)' : 'Tick to confirm, then Upload';
+    } else {
+      box.style.display = 'none'; chk.checked = false; btn.textContent = 'Upload';
+    }
+  }
+  dateInput.addEventListener('input', refresh);
+  chk.addEventListener('change', refresh);
+  refresh();
+})();
+</script>
+</body></html>
