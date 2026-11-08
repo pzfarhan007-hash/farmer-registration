@@ -55,8 +55,9 @@ _BASELINE_FALLBACK_LABEL = "no baseline uploaded yet"
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 MONTH_BASELINES_DIR = os.path.join(DATA_DIR, "baselines")
 TARGETS_OVERRIDE_FILE = os.path.join(DATA_DIR, "targets.json")
+PENDENCY_OVERRIDE_FILE = os.path.join(DATA_DIR, "pendency.json")  # v38
 VILLAGE_TEHSIL_OVERRIDE_FILE = os.path.join(DATA_DIR, "village_tehsil_overrides.json")
-UNBUCKETED_FILE = os.path.join(DATA_DIR, "unbucketed.json")   # explicit "hide" flags (rare — target=0 usually enough)
+UNBUCKETED_FILE = os.path.join(DATA_DIR, "unbucketed.json")
 CSV_ALIAS_FILE = os.path.join(DATA_DIR, "csv_village_aliases.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "portal_settings.json")
 
@@ -95,7 +96,8 @@ def canonical_tehsil(t):
 _DUPLICATE_VILLAGE_NORMS = set()
 def _init_duplicate_village_norms():
     counts = {}
-    for t, v, _ in DEFAULT_TARGETS:
+    for row in DEFAULT_TARGETS:
+        t, v = row[0], row[1]  # row is (t, v, target, pendency)
         n = norm_name(v)
         counts[n] = counts.get(n, 0) + 1
     _DUPLICATE_VILLAGE_NORMS.update(n for n, c in counts.items() if c > 1)
@@ -131,6 +133,9 @@ def _write_json(path, obj):
 
 def load_targets_overrides():
     return _read_json(TARGETS_OVERRIDE_FILE, {})
+
+def load_pendency_overrides():
+    return _read_json(PENDENCY_OVERRIDE_FILE, {})
 
 def load_village_tehsil_overrides():
     """{norm_key: canonical_tehsil_name} — correct AGRISTACK-misassigned tehsils."""
@@ -386,25 +391,43 @@ def per_day_additions(per_date, sorted_dates):
 # =========================================================================
 
 def effective_targets():
-    """Yield (tehsil, village, target) for every known village (master + overrides)."""
-    overrides = load_targets_overrides()
+    """Yield (tehsil, village, target, pendency) for every known village
+    (master + target-overrides + pendency-overrides)."""
+    target_overrides  = load_targets_overrides()
+    pendency_overrides = load_pendency_overrides()
     seen = set()
-    for t, v, tg in DEFAULT_TARGETS:
+    for t, v, tg, pd in DEFAULT_TARGETS:
         k = norm_key(t, v)
         seen.add(k)
-        cur = overrides.get(k, tg)
-        try: cur = int(cur)
-        except Exception: cur = tg
-        yield (t, v, cur)
-    # Admin-added villages (keys only in overrides)
-    for k, cur in overrides.items():
+        cur_t = target_overrides.get(k, tg)
+        cur_p = pendency_overrides.get(k, pd)
+        try: cur_t = int(cur_t)
+        except Exception: cur_t = tg
+        try: cur_p = int(cur_p)
+        except Exception: cur_p = pd
+        yield (t, v, cur_t, cur_p)
+    for k, cur in target_overrides.items():
         if k in seen: continue
         parts = k.split("||", 1)
-        t = parts[0].title() if len(parts) == 2 else k
-        v = parts[1].title() if len(parts) == 2 else ""
+        t = parts[0].title() if len(parts) == 2 else ""
+        v = parts[1].title() if len(parts) == 2 else k.lstrip("|").title()
         try: cur = int(cur)
         except Exception: cur = 0
-        yield (t, v, cur)
+        cur_p = pendency_overrides.get(k, 0)
+        try: cur_p = int(cur_p)
+        except Exception: cur_p = 0
+        yield (t, v, cur, cur_p)
+        seen.add(k)
+    # Pendency-only overrides (no target set)
+    for k, cur_p in pendency_overrides.items():
+        if k in seen: continue
+        parts = k.split("||", 1)
+        t = parts[0].title() if len(parts) == 2 else ""
+        v = parts[1].title() if len(parts) == 2 else k.lstrip("|").title()
+        try: cur_p = int(cur_p)
+        except Exception: cur_p = 0
+        yield (t, v, 0, cur_p)
+        seen.add(k)
 
 def villages_seen_in_uploads():
     """{norm_key: {tehsil, village}} for any village encountered in a baseline
@@ -443,12 +466,14 @@ def build_nested_structure():
     tehsil_overrides = load_village_tehsil_overrides()
     unbucketed_flags = load_unbucketed_flags()
 
-    # Build target map by norm_key (with overrides applied)
+    # Build target + pendency maps by norm_key (with overrides applied)
     targets = {}
+    pendencies = {}
     display = {}
-    for t, v, tg in effective_targets():
+    for t, v, tg, pd in effective_targets():
         k = norm_key(t, v)
         targets[k] = tg
+        pendencies[k] = pd
         display[k] = (canonical_tehsil(t), v)
 
     baseline_by_key = baseline_counts()
@@ -478,15 +503,18 @@ def build_nested_structure():
         iss_b, app_b = _bl(key)
         master_t, disp_v = display.get(key, ("", ""))
         disp_t = _effective_tehsil(key, rec, master_t)
+        pending = pendencies.get(key, 0)
         if rec:
             villages[key] = {
                 "tehsil": disp_t, "village": disp_v, "target": tgt,
+                "pendency": pending,
                 "issued": rec["issued"], "approved": rec["approved"],
                 "issuedBaseline": iss_b, "approvedBaseline": app_b,
             }
         else:
             villages[key] = {
                 "tehsil": disp_t, "village": disp_v, "target": tgt,
+                "pendency": pending,
                 "issued": iss_b, "approved": app_b,
                 "issuedBaseline": iss_b, "approvedBaseline": app_b,
             }
@@ -497,14 +525,18 @@ def build_nested_structure():
         disp_t = _effective_tehsil(key, rec, rec["tehsil"])
         villages[key] = {
             "tehsil": disp_t, "village": rec["village"], "target": 0,
+            "pendency": pendencies.get(key, 0),
             "issued": rec["issued"], "approved": rec["approved"],
             "issuedBaseline": iss_b, "approvedBaseline": app_b,
         }
 
-    # HIDE unbucketed (target == 0 OR explicit flag) from the dashboard entirely
+    # v38 — visibility rule:
+    #   HIDE only if (explicit unbucketed flag) OR (target == 0 AND issued == 0).
+    #   A village with no target but CSV farmer-IDs still shows up so the
+    #   district total remains accurate. Target can be filled in later.
     villages = {k: v for k, v in villages.items()
                 if not unbucketed_flags.get(k)
-                and (v.get("target", 0) or 0) > 0}
+                and (((v.get("target", 0) or 0) > 0) or ((v.get("issued", 0) or 0) > 0))}
 
     # Attach per-village datedCounts (positive daily deltas)
     daily = per_day_additions(per_date, sorted_dates)
@@ -531,16 +563,17 @@ def build_nested_structure():
         v.setdefault("datedCounts", {})
 
     # Group by canonical tehsil
-    tehsils = {t: {"tehsil": t, "target": 0, "issued": 0, "approved": 0,
+    tehsils = {t: {"tehsil": t, "target": 0, "pendency": 0, "issued": 0, "approved": 0,
                    "issuedBaseline": 0, "approvedBaseline": 0,
                    "villages": []} for t in KUPWARA_TEHSILS}
     for key, v in villages.items():
         t = canonical_tehsil(v["tehsil"])
         if t not in tehsils:
-            tehsils[t] = {"tehsil": t, "target": 0, "issued": 0, "approved": 0,
+            tehsils[t] = {"tehsil": t, "target": 0, "pendency": 0, "issued": 0, "approved": 0,
                           "issuedBaseline": 0, "approvedBaseline": 0, "villages": []}
         obj = tehsils[t]
         obj["target"]           += v["target"]
+        obj["pendency"]         += v.get("pendency", 0)
         obj["issued"]           += v["issued"]
         obj["approved"]         += v["approved"]
         obj["issuedBaseline"]   += v["issuedBaseline"]
@@ -861,9 +894,10 @@ def edit_targets():
 
     if request.method == "POST":
         new_targets = {}
+        new_pendency = {}
         new_tehsil_overrides = {}
         new_unbucketed = {}
-        # Row edits: target::<norm_key> and tehsil::<norm_key>
+        # Row edits: target::<norm_key>, pendency::<norm_key>, tehsil::<norm_key>
         for key, val in request.form.items():
             if key.startswith("target::"):
                 vk = key[len("target::"):]
@@ -871,6 +905,12 @@ def edit_targets():
                 except ValueError: n = 0
                 if n < 0: n = 0
                 new_targets[vk] = n
+            elif key.startswith("pendency::"):
+                vk = key[len("pendency::"):]
+                try: n = int(val or 0)
+                except ValueError: n = 0
+                if n < 0: n = 0
+                new_pendency[vk] = n
         for key, val in request.form.items():
             if key.startswith("tehsil::"):
                 vk = key[len("tehsil::"):]
@@ -885,7 +925,7 @@ def edit_targets():
                 vk = key[len("unbucketed::"):]
                 new_unbucketed[vk] = True
 
-        # Unknown-village new rows: unk_tehsil::<norm_key> and unk_target::<norm_key>
+        # Unknown-village new rows: unk_tehsil::<norm_key>, unk_target::<norm_key>, unk_pendency::<norm_key>
         for key, val in request.form.items():
             if key.startswith("unk_target::"):
                 vk = key[len("unk_target::"):]
@@ -893,12 +933,19 @@ def edit_targets():
                 try: n = int(val or 0)
                 except ValueError: n = 0
                 if n < 0: n = 0
+                pend_raw = request.form.get("unk_pendency::" + vk, "")
+                try: np_ = int(pend_raw or 0)
+                except ValueError: np_ = 0
+                if np_ < 0: np_ = 0
                 if n > 0:
                     new_targets[vk] = n
+                if np_ > 0:
+                    new_pendency[vk] = np_
                 if t and t in KUPWARA_TEHSILS:
                     new_tehsil_overrides[vk] = t
 
         _write_json(TARGETS_OVERRIDE_FILE, new_targets)
+        _write_json(PENDENCY_OVERRIDE_FILE, new_pendency)
         _write_json(VILLAGE_TEHSIL_OVERRIDE_FILE, new_tehsil_overrides)
         _write_json(UNBUCKETED_FILE, new_unbucketed)
 
@@ -906,6 +953,8 @@ def edit_targets():
             try:
                 commit_to_github(TARGETS_OVERRIDE_FILE, "data/targets.json",
                                  "admin: update village targets")
+                commit_to_github(PENDENCY_OVERRIDE_FILE, "data/pendency.json",
+                                 "admin: update village pendency")
                 commit_to_github(VILLAGE_TEHSIL_OVERRIDE_FILE, "data/village_tehsil_overrides.json",
                                  "admin: update village tehsil assignments")
                 commit_to_github(UNBUCKETED_FILE, "data/unbucketed.json",
@@ -935,17 +984,21 @@ def edit_targets():
             if t in KUPWARA_TEHSILS:
                 csv_tehsil_by_key[k] = t
 
+    pendency_overrides = load_pendency_overrides()
+
     # Group villages by effective tehsil (CSV / overrides applied)
     rows_by_tehsil = {t: [] for t in KUPWARA_TEHSILS}
     seen_keys = set()
-    for t, v, tg in DEFAULT_TARGETS:
+    for t, v, tg, pd in DEFAULT_TARGETS:
         k = norm_key(t, v)
         seen_keys.add(k)
         cur_target = overrides.get(k, tg)
         try: cur_target = int(cur_target)
         except: cur_target = tg
+        cur_pend = pendency_overrides.get(k, pd)
+        try: cur_pend = int(cur_pend)
+        except: cur_pend = pd
         master_t = canonical_tehsil(t)
-        # Priority: admin override > CSV tehsil > master tehsil
         eff_tehsil = tehsil_overrides.get(k,
                         csv_tehsil_by_key.get(k, master_t))
         rows_by_tehsil.setdefault(eff_tehsil, []).append({
@@ -955,7 +1008,10 @@ def edit_targets():
             "effective_tehsil": eff_tehsil,
             "default_target": tg,
             "current_target": cur_target,
+            "default_pendency": pd,
+            "current_pendency": cur_pend,
             "target_overridden": cur_target != tg,
+            "pendency_overridden": cur_pend != pd,
             "unbucketed_flag": unbucketed_flags.get(k, False),
             "unbucketed": unbucketed_flags.get(k, False) or (cur_target or 0) <= 0,
             "from_master": True,
@@ -969,6 +1025,9 @@ def edit_targets():
         v = parts[1].title() if len(parts) == 2 else k.lstrip("|").title()
         try: cur = int(cur)
         except: cur = 0
+        cur_pend = pendency_overrides.get(k, 0)
+        try: cur_pend = int(cur_pend)
+        except: cur_pend = 0
         master_t_guess = canonical_tehsil(t_raw) if t_raw else ""
         eff_tehsil = tehsil_overrides.get(k,
                         csv_tehsil_by_key.get(k, master_t_guess))
@@ -976,18 +1035,17 @@ def edit_targets():
             "key": k, "village": v,
             "master_tehsil": None, "effective_tehsil": eff_tehsil,
             "default_target": None, "current_target": cur,
-            "target_overridden": True,
+            "default_pendency": None, "current_pendency": cur_pend,
+            "target_overridden": True, "pendency_overridden": True,
             "unbucketed_flag": unbucketed_flags.get(k, False),
             "unbucketed": unbucketed_flags.get(k, False) or cur <= 0,
             "from_master": False,
         })
         seen_keys.add(k)
 
-    # Sort inside each tehsil by village name
     for t in rows_by_tehsil:
         rows_by_tehsil[t].sort(key=lambda r: r["village"].upper())
 
-    # Counts per tehsil
     tehsil_rows = []
     for t in KUPWARA_TEHSILS + [x for x in rows_by_tehsil.keys() if x not in KUPWARA_TEHSILS]:
         rows = rows_by_tehsil.get(t, [])
@@ -997,16 +1055,16 @@ def edit_targets():
         tehsil_rows.append({
             "tehsil": t, "rows": rows,
             "count": len(rows), "bucketed": bucketed, "unbucketed": unbucketed,
-            "target_sum": sum(r["current_target"] for r in rows if not r["unbucketed"]),
+            "target_sum":  sum(r["current_target"]  for r in rows if not r["unbucketed"]),
+            "pendency_sum": sum(r["current_pendency"] for r in rows if not r["unbucketed"]),
         })
 
-    # Totals banner
     total_rows   = sum(len(tr["rows"]) for tr in tehsil_rows)
     total_bkt    = sum(tr["bucketed"] for tr in tehsil_rows)
     total_unbkt  = sum(tr["unbucketed"] for tr in tehsil_rows)
     total_target = sum(tr["target_sum"] for tr in tehsil_rows)
+    total_pendency = sum(tr["pendency_sum"] for tr in tehsil_rows)
 
-    # CSV-unknown section: villages seen in data but not in master list AND not in overrides
     unknowns = []
     for k, info in villages_seen_in_uploads().items():
         if k in seen_keys: continue
@@ -1018,6 +1076,7 @@ def edit_targets():
                            tehsils=KUPWARA_TEHSILS,
                            total_rows=total_rows, total_bucketed=total_bkt,
                            total_unbucketed=total_unbkt, total_target=total_target,
+                           total_pendency=total_pendency,
                            unknowns=unknowns,
                            error=error, saved=saved)
 
@@ -1058,7 +1117,7 @@ def csv_reconciliation():
     # Build list of CSV-seen village norms that don't match any master village
     master_village_norms = set()
     master_villages_by_norm = {}
-    for t, v, _ in DEFAULT_TARGETS:
+    for t, v, _tg, _pd in DEFAULT_TARGETS:
         n = norm_name(v)
         master_village_norms.add(n)
         master_villages_by_norm[n] = (canonical_tehsil(t), v)
@@ -1117,13 +1176,13 @@ def download_csv():
     state = build_nested_structure()
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["Tehsil", "Village", "Target", "Total Issued",
+    w.writerow(["Tehsil", "Village", "Target", "Pendency", "Total Issued",
                 "Additions this month", "Issue %", "Approved", "Approval %"])
     for t in state["tehsils"]:
         for v in t["villages"]:
             additions = v["issued"] - v["issuedBaseline"]
-            w.writerow([t["tehsil"], v["village"], v["target"], v["issued"],
-                        additions, _pct(v["issued"], v["target"]),
+            w.writerow([t["tehsil"], v["village"], v["target"], v.get("pendency", 0),
+                        v["issued"], additions, _pct(v["issued"], v["target"]),
                         v["approved"], _pct(v["approved"], v["issued"])])
     today = datetime.utcnow().strftime("%Y-%m-%d")
     return Response(buf.getvalue(), mimetype="text/csv",
@@ -1162,28 +1221,29 @@ def download_xlsx():
 
     # Sheet 1: Tehsil Summary
     ws = wb.active; ws.title = "Tehsil Summary"
-    headers = ["#", "Tehsil", "Villages", "Target", "Total Issued",
+    headers = ["#", "Tehsil", "Villages", "Target", "Pendency", "Total Issued",
                "Additions this month", "Issue %", "Approved", "Approval %"]
-    rows = []; gT=gI=gA=gAdd=0
+    rows = []; gT=gP=gI=gA=gAdd=0
     for i, t in enumerate(sorted(state["tehsils"], key=lambda t: -t["issued"]), 1):
         additions = t["issued"] - t["issuedBaseline"]
-        rows.append([i, t["tehsil"], len(t["villages"]), t["target"], t["issued"],
+        tp = t.get("pendency", 0)
+        rows.append([i, t["tehsil"], len(t["villages"]), t["target"], tp, t["issued"],
                      additions, _pct(t["issued"], t["target"]),
                      t["approved"], _pct(t["approved"], t["issued"])])
-        gT += t["target"]; gI += t["issued"]; gA += t["approved"]; gAdd += additions
-    totals = ["", "TOTAL", "", gT, gI, gAdd, _pct(gI, gT), gA, _pct(gA, gI)]
+        gT += t["target"]; gP += tp; gI += t["issued"]; gA += t["approved"]; gAdd += additions
+    totals = ["", "TOTAL", "", gT, gP, gI, gAdd, _pct(gI, gT), gA, _pct(gA, gI)]
     write_sheet(ws, headers, rows, totals)
 
     # Sheet 2: Village Details
     ws = wb.create_sheet("Village Details")
-    headers = ["#", "Tehsil", "Village", "Target", "Total Issued",
+    headers = ["#", "Tehsil", "Village", "Target", "Pendency", "Total Issued",
                "Additions this month", "Issue %", "Approved", "Approval %"]
     rows = []; n = 1
     for t in state["tehsils"]:
         for v in t["villages"]:
             additions = v["issued"] - v["issuedBaseline"]
-            rows.append([n, t["tehsil"], v["village"], v["target"], v["issued"],
-                         additions, _pct(v["issued"], v["target"]),
+            rows.append([n, t["tehsil"], v["village"], v["target"], v.get("pendency", 0),
+                         v["issued"], additions, _pct(v["issued"], v["target"]),
                          v["approved"], _pct(v["approved"], v["issued"])])
             n += 1
     write_sheet(ws, headers, rows)

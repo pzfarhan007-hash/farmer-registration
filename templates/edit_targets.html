@@ -66,13 +66,15 @@
   <div class="totals">
     <strong>{{ total_rows }}</strong> villages in all ·
     <span class="bucketed-count">{{ total_bucketed }} bucketed</span> ·
-    <span class="unbucketed-count">{{ total_unbucketed }} unbucketed (hidden from dashboard)</span> ·
-    <strong>{{ "{:,}".format(total_target) }}</strong> total target
+    <span class="unbucketed-count">{{ total_unbucketed }} unbucketed</span> ·
+    <strong>{{ "{:,}".format(total_target) }}</strong> total target ·
+    <strong style="color:#92400e">{{ "{:,}".format(total_pendency) }}</strong> total pendency
   </div>
   <p class="mut" style="margin-top:10px;">
     Set target = 0 (or blank) to <strong>unbucket</strong> a village — it disappears from the dashboard
-    until a target is entered. Use the tehsil dropdown on each row to re-assign a village to the correct
-    tehsil (overrides stick until changed).
+    unless CSV data exists for it (farmer IDs always count). Use the tehsil dropdown on each row to
+    re-assign a village to the correct tehsil. Pendency = bucket count still pending to be claimed
+    (per the bucket report); editable here.
   </p>
 </div>
 
@@ -95,6 +97,7 @@
         <th>Village</th>
         <th>Effective Tehsil (dropdown lets you correct)</th>
         <th class="num" style="text-align:right">Target</th>
+        <th class="num" style="text-align:right;background:#fdf4ec;color:#92400e">Pendency</th>
         <th style="text-align:center">Status</th>
       </tr></thead>
       <tbody>
@@ -117,6 +120,9 @@
             </td>
             <td style="text-align:right">
               <input type="number" name="target::{{ r.key }}" value="{{ r.current_target }}" min="0" step="1">
+            </td>
+            <td style="text-align:right;background:#fdf4ec">
+              <input type="number" name="pendency::{{ r.key }}" value="{{ r.current_pendency }}" min="0" step="1">
             </td>
             <td style="text-align:center">
               {% if r.unbucketed %}
@@ -146,6 +152,7 @@
       <th>Tehsil (as in CSV)</th>
       <th>Assign to tehsil</th>
       <th style="text-align:right">Target</th>
+      <th style="text-align:right;background:#fdf4ec;color:#92400e">Pendency</th>
     </tr></thead>
     <tbody>
       {% for u in unknowns %}
@@ -162,6 +169,9 @@
           </td>
           <td style="text-align:right">
             <input type="number" name="unk_target::{{ u.key }}" value="0" min="0" step="1">
+          </td>
+          <td style="text-align:right;background:#fdf4ec">
+            <input type="number" name="unk_pendency::{{ u.key }}" value="0" min="0" step="1">
           </td>
         </tr>
       {% endfor %}
