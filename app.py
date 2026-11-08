@@ -85,8 +85,27 @@ def canonical_tehsil(t):
     n = norm_name(t)
     return _TEHSIL_CANONICAL.get(n, t)
 
+# v37.2 — village-name-primary keying.
+# AGRISTACK CSV's tehsil assignment is authoritative per the user. 329 of 334
+# master villages have unique names, so for them we key by village name only —
+# whatever tehsil the CSV reports is the one the dashboard displays. For the
+# remaining 5 village names that appear in multiple tehsils (Batapora, Dard
+# Pora, Kawari, Push Wari, Tulwari), both tehsil AND village must still match
+# to disambiguate.
+_DUPLICATE_VILLAGE_NORMS = set()
+def _init_duplicate_village_norms():
+    counts = {}
+    for t, v, _ in DEFAULT_TARGETS:
+        n = norm_name(v)
+        counts[n] = counts.get(n, 0) + 1
+    _DUPLICATE_VILLAGE_NORMS.update(n for n, c in counts.items() if c > 1)
+_init_duplicate_village_norms()
+
 def norm_key(tehsil, village):
-    return canonical_tehsil(tehsil).upper() + "||" + _apply_village_alias(norm_name(village))
+    n_vil = _apply_village_alias(norm_name(village))
+    if n_vil in _DUPLICATE_VILLAGE_NORMS:
+        return canonical_tehsil(tehsil).upper() + "||" + n_vil
+    return "||" + n_vil   # empty tehsil prefix = unique name, any tehsil matches
 
 def _apply_village_alias(norm_village):
     """Map a normalized village name to its portal-canonical form via CSV
@@ -437,15 +456,28 @@ def build_nested_structure():
         rec = baseline_by_key.get(key)
         return (rec["issued"], rec["approved"]) if rec else (0, 0)
 
+    # v37.2 — tehsil display priority:
+    #   1. Admin manual override (admin used the targets-page dropdown)
+    #   2. AGRISTACK CSV tehsil (if the village has CSV data and the CSV tehsil
+    #      is a valid Kupwara tehsil)
+    #   3. Master-list tehsil (xlsx), as a last resort for villages with no
+    #      CSV data yet
+    def _effective_tehsil(key, cumrec, master_disp_t):
+        if key in tehsil_overrides:
+            return tehsil_overrides[key]
+        if cumrec:
+            csv_t = canonical_tehsil(cumrec.get("tehsil", ""))
+            if csv_t in KUPWARA_TEHSILS:
+                return csv_t
+        return master_disp_t
+
     # All villages: master targets ∪ cumulative-seen
     villages = {}
     for key, tgt in targets.items():
         rec = cumulative.get(key)
         iss_b, app_b = _bl(key)
-        disp_t, disp_v = display.get(key, ("", ""))
-        # Apply tehsil override if present (admin re-assigned the tehsil)
-        if key in tehsil_overrides:
-            disp_t = tehsil_overrides[key]
+        master_t, disp_v = display.get(key, ("", ""))
+        disp_t = _effective_tehsil(key, rec, master_t)
         if rec:
             villages[key] = {
                 "tehsil": disp_t, "village": disp_v, "target": tgt,
@@ -462,8 +494,7 @@ def build_nested_structure():
     for key, rec in cumulative.items():
         if key in villages: continue
         iss_b, app_b = _bl(key)
-        disp_t = rec["tehsil"]
-        if key in tehsil_overrides: disp_t = tehsil_overrides[key]
+        disp_t = _effective_tehsil(key, rec, rec["tehsil"])
         villages[key] = {
             "tehsil": disp_t, "village": rec["village"], "target": 0,
             "issued": rec["issued"], "approved": rec["approved"],
@@ -844,18 +875,11 @@ def edit_targets():
             if key.startswith("tehsil::"):
                 vk = key[len("tehsil::"):]
                 t = (val or "").strip()
+                # v37.2 — store EVERY explicit tehsil pick, regardless of whether
+                # it matches master. Because CSV tehsil now auto-wins over master,
+                # the admin's pick must always stick to prevent CSV from clobbering it.
                 if t and t in KUPWARA_TEHSILS:
-                    # Only store if DIFFERENT from the master-list tehsil for this village
-                    # (so overrides table stays small). First look up master tehsil.
-                    master_t = None
-                    for mt, mv, _ in DEFAULT_TARGETS:
-                        if norm_key(mt, mv) == vk:
-                            master_t = canonical_tehsil(mt); break
-                    if master_t and t != master_t:
-                        new_tehsil_overrides[vk] = t
-                    elif master_t is None:
-                        # Not a master-list village — always store
-                        new_tehsil_overrides[vk] = t
+                    new_tehsil_overrides[vk] = t
         for key, val in request.form.items():
             if key.startswith("unbucketed::") and val == "yes":
                 vk = key[len("unbucketed::"):]
@@ -898,7 +922,20 @@ def edit_targets():
     tehsil_overrides  = load_village_tehsil_overrides()
     unbucketed_flags  = load_unbucketed_flags()
 
-    # Group villages by effective tehsil (overrides applied)
+    # v37.2 — snapshot the most-recent CSV-reported tehsil for each village.
+    # CSV tehsil wins over master tehsil unless admin set a manual override.
+    csv_tehsil_by_key = {}
+    for _, path in list_month_baseline_files() + discover_snapshots():
+        try:
+            snap = parse_snapshot_csv(path)
+        except Exception:
+            continue
+        for k, v in snap.items():
+            t = canonical_tehsil(v["tehsil"])
+            if t in KUPWARA_TEHSILS:
+                csv_tehsil_by_key[k] = t
+
+    # Group villages by effective tehsil (CSV / overrides applied)
     rows_by_tehsil = {t: [] for t in KUPWARA_TEHSILS}
     seen_keys = set()
     for t, v, tg in DEFAULT_TARGETS:
@@ -907,7 +944,10 @@ def edit_targets():
         cur_target = overrides.get(k, tg)
         try: cur_target = int(cur_target)
         except: cur_target = tg
-        eff_tehsil = tehsil_overrides.get(k, canonical_tehsil(t))
+        master_t = canonical_tehsil(t)
+        # Priority: admin override > CSV tehsil > master tehsil
+        eff_tehsil = tehsil_overrides.get(k,
+                        csv_tehsil_by_key.get(k, master_t))
         rows_by_tehsil.setdefault(eff_tehsil, []).append({
             "key": k,
             "village": v,
@@ -925,11 +965,13 @@ def edit_targets():
     for k, cur in overrides.items():
         if k in seen_keys: continue
         parts = k.split("||", 1)
-        t = parts[0].title() if len(parts) == 2 else k
-        v = parts[1].title() if len(parts) == 2 else ""
+        t_raw = parts[0] if len(parts) == 2 else ""
+        v = parts[1].title() if len(parts) == 2 else k.lstrip("|").title()
         try: cur = int(cur)
         except: cur = 0
-        eff_tehsil = tehsil_overrides.get(k, canonical_tehsil(t))
+        master_t_guess = canonical_tehsil(t_raw) if t_raw else ""
+        eff_tehsil = tehsil_overrides.get(k,
+                        csv_tehsil_by_key.get(k, master_t_guess))
         rows_by_tehsil.setdefault(eff_tehsil, []).append({
             "key": k, "village": v,
             "master_tehsil": None, "effective_tehsil": eff_tehsil,
