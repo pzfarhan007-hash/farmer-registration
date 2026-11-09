@@ -569,35 +569,70 @@ def build_nested_structure():
 
     # v39 visibility rule:
     #   HIDE if (admin deleted) OR (explicit unbucketed flag) OR
-    #          (target == 0 AND issued == 0). Admin-deleted wins over CSV data —
-    #   lets admin retire a wrong-spelled master entry so only the CSV-spelled
-    #   new entry remains, de-duplicating the display.
+    #          (target == 0 AND issued == 0).
     villages = {k: v for k, v in villages.items()
                 if not deleted_villages.get(k)
                 and not unbucketed_flags.get(k)
                 and (((v.get("target", 0) or 0) > 0) or ((v.get("issued", 0) or 0) > 0))}
 
-    # Attach per-village datedCounts (positive daily deltas)
+    # v39.1 — AUTO-MERGE entries that are the same village under different
+    # spellings. Master list uses "Dardpora" / "Lalpora" (no space); AGRISTACK
+    # CSV uses "Dard Pora" / "Lal Pora" (with space). Without this merge the
+    # dashboard would show both as separate rows — one with only a target, the
+    # other with only CSV farmer-ID counts. Merge key = (effective tehsil,
+    # village name stripped of all whitespace and punctuation).
+    def _strip(s):
+        return re.sub(r"[^A-Z0-9]", "", (s or "").upper())
+    merge_primary = {}  # (tehsil_canon, stripped_name) -> primary key (original norm_key)
+    merge_map = {}      # original norm_key -> primary key (identity if itself is primary)
+    # Preference order for "primary": the key with the highest target. Ties go
+    # to the first-seen (so sort predictably).
+    _order = sorted(villages.items(), key=lambda kv: -(kv[1].get("target", 0) or 0))
+    for k, v in _order:
+        mk = (canonical_tehsil(v.get("tehsil", "")), _strip(v.get("village", "")))
+        if mk not in merge_primary:
+            merge_primary[mk] = k
+            merge_map[k] = k
+        else:
+            merge_map[k] = merge_primary[mk]
+    # Fold non-primary rows into their primary; then drop them.
+    for k, primary in merge_map.items():
+        if k == primary: continue
+        prev = villages[primary]; v = villages[k]
+        prev["target"]           = max(prev.get("target", 0),   v.get("target", 0))
+        prev["pendency"]         = max(prev.get("pendency", 0), v.get("pendency", 0))
+        prev["issued"]           += v.get("issued", 0)
+        prev["approved"]         += v.get("approved", 0)
+        prev["issuedBaseline"]   += v.get("issuedBaseline", 0)
+        prev["approvedBaseline"] += v.get("approvedBaseline", 0)
+    villages = {k: v for k, v in villages.items() if merge_map.get(k, k) == k}
+
+    # Attach per-village datedCounts (positive daily deltas).
+    # Route each original-key delta through merge_map so two merged rows sum
+    # into a single primary dated entry.
     daily = per_day_additions(per_date, sorted_dates)
     for d, data in daily.items():
         for vk, delta in data["by_village"].items():
-            if vk in villages and delta > 0:
-                villages[vk].setdefault("datedCounts", {})
-                villages[vk]["datedCounts"][d] = {"issued": delta, "approved": 0}
+            target_key = merge_map.get(vk, vk)
+            if target_key in villages and delta > 0:
+                villages[target_key].setdefault("datedCounts", {})
+                slot = villages[target_key]["datedCounts"].setdefault(d, {"issued": 0, "approved": 0})
+                slot["issued"] += delta
     # Approvals per date
     for i, d in enumerate(sorted_dates):
         current = per_date[d]
         for key, rec in current.items():
-            if key not in villages: continue
+            target_key = merge_map.get(key, key)
+            if target_key not in villages: continue
             if i == 0:
                 a_delta = rec["approved"]
             else:
-                prev = per_date[sorted_dates[i-1]]
-                a_delta = rec["approved"] - prev.get(key, {}).get("approved", 0)
+                prev_d = per_date[sorted_dates[i-1]]
+                a_delta = rec["approved"] - prev_d.get(key, {}).get("approved", 0)
             if a_delta > 0:
-                villages[key].setdefault("datedCounts", {})
-                villages[key]["datedCounts"].setdefault(d, {"issued": 0, "approved": 0})
-                villages[key]["datedCounts"][d]["approved"] = a_delta
+                villages[target_key].setdefault("datedCounts", {})
+                slot = villages[target_key]["datedCounts"].setdefault(d, {"issued": 0, "approved": 0})
+                slot["approved"] += a_delta
     for v in villages.values():
         v.setdefault("datedCounts", {})
 
