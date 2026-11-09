@@ -40,6 +40,8 @@
     .save-bar { position:sticky; bottom:0; background:#fff; border-top:1px solid #e5e7eb; padding:14px 20px; display:flex; justify-content:space-between; align-items:center; box-shadow:0 -2px 6px rgba(0,0,0,.05); }
     .btn { background:#0b4d2b; color:#fff; padding:10px 20px; border:none; border-radius:6px; font-weight:600; font-size:14px; cursor:pointer; }
     .btn:hover { background:#166534; }
+    .btn.danger { background:#b91c1c; } .btn.danger:hover { background:#991b1b; }
+    .btn.warn { background:#a16207; } .btn.warn:hover { background:#854d0e; }
     .totals { background:#eef4ed; padding:10px 14px; border-radius:8px; font-size:14px; }
     .totals strong { color:#0b4d2b; }
     .warn-row td { background:#fef2f2 !important; }
@@ -60,6 +62,47 @@
 
 {% if saved %}<div class="ok">Saved targets, tehsil assignments and unbucketed flags.</div>{% endif %}
 {% if error %}<div class="err">{{ error }}</div>{% endif %}
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for category, msg in messages %}
+    <div class="{{ 'ok' if category == 'ok' else 'err' }}">{{ msg }}</div>
+  {% endfor %}
+{% endwith %}
+
+<div class="card" style="border-color:#86efac;background:#f6fdf7;">
+  <h3 style="color:#15803d;">Add a new village</h3>
+  <p class="mut">
+    Use this to introduce a village with a specific spelling (usually the
+    AGRISTACK CSV spelling) so CSV rows attach cleanly. Leave target / pendency
+    at 0 to add it unbucketed.
+  </p>
+  <form method="POST" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+    <input type="hidden" name="action" value="add_village">
+    <div>
+      <label style="font-size:11px; color:#64748b; display:block; margin-bottom:4px;">TEHSIL</label>
+      <select name="new_tehsil" required class="tehsel" style="min-width:160px;">
+        <option value="">— pick —</option>
+        {% for t in tehsils %}
+          <option value="{{ t }}">{{ t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label style="font-size:11px; color:#64748b; display:block; margin-bottom:4px;">VILLAGE NAME</label>
+      <input type="text" name="new_village" required
+             placeholder="Exact CSV spelling"
+             style="padding:6px 8px; border:1px solid #d1d5db; border-radius:5px; min-width:200px; font-size:13px;">
+    </div>
+    <div>
+      <label style="font-size:11px; color:#64748b; display:block; margin-bottom:4px;">TARGET</label>
+      <input type="number" name="new_target" value="0" min="0" step="1" style="width:90px;">
+    </div>
+    <div>
+      <label style="font-size:11px; color:#92400e; display:block; margin-bottom:4px;">PENDENCY</label>
+      <input type="number" name="new_pendency" value="0" min="0" step="1" style="width:90px;">
+    </div>
+    <button type="submit" class="btn" style="background:#15803d;">Add village</button>
+  </form>
+</div>
 
 <div class="card">
   <h2>Village Targets</h2>
@@ -99,13 +142,16 @@
         <th class="num" style="text-align:right">Target</th>
         <th class="num" style="text-align:right;background:#fdf4ec;color:#92400e">Pendency</th>
         <th style="text-align:center">Status</th>
+        <th style="text-align:center">Delete</th>
       </tr></thead>
       <tbody>
         {% for r in tr.rows %}
           <tr class="{% if r.unbucketed %}unbucketed{% else %}bucketed{% endif %}">
             <td>
               <strong>{{ r.village }}</strong>
-              {% if not r.from_master %}
+              {% if r.admin_added %}
+                <span class="tag" style="background:#dcfce7;color:#166534;">admin-added</span>
+              {% elif not r.from_master %}
                 <span class="tag unk" title="This village was added from outside the master list">non-master</span>
               {% elif r.master_tehsil != r.effective_tehsil %}
                 <span class="tag ovr" title="Original master tehsil: {{ r.master_tehsil }}">tehsil overridden</span>
@@ -130,6 +176,11 @@
               {% else %}
                 <span class="tag bkt">Bucketed</span>
               {% endif %}
+            </td>
+            <td style="text-align:center">
+              <button type="button" class="btn danger"
+                      onclick="return _del('{{ r.key }}', '{{ r.village|e }}');"
+                      style="padding:3px 10px; font-size:11px;">Delete</button>
             </td>
           </tr>
         {% endfor %}
@@ -188,6 +239,57 @@
 </div>
 
 </form>
+
+{% if deleted_rows %}
+<div class="card" style="border-color:#fecaca;background:#fef2f2;">
+  <h3 style="color:#991b1b;">Deleted villages
+    <span style="font-weight:400;color:#64748b;font-size:14px;">({{ deleted_rows|length }}) — hidden from the dashboard. Restore to bring back.</span>
+  </h3>
+  <table class="t">
+    <thead><tr>
+      <th>Village</th><th>Original Tehsil</th>
+      <th class="num" style="text-align:right">Target</th>
+      <th class="num" style="text-align:right;background:#fdf4ec;color:#92400e">Pendency</th>
+      <th style="text-align:center">Restore</th>
+    </tr></thead>
+    <tbody>
+      {% for r in deleted_rows %}
+        <tr>
+          <td><strong>{{ r.village }}</strong>
+            {% if r.admin_added %}<span class="tag" style="background:#dcfce7;color:#166534;">admin-added</span>
+            {% elif r.from_master %}<span class="tag" style="background:#e2e8f0;color:#334155;">from master</span>{% endif %}
+          </td>
+          <td>{{ r.effective_tehsil or r.master_tehsil or '—' }}</td>
+          <td style="text-align:right">{{ r.current_target }}</td>
+          <td style="text-align:right">{{ r.current_pendency }}</td>
+          <td style="text-align:center">
+            <form method="POST" style="display:inline;">
+              <input type="hidden" name="action" value="restore_village">
+              <input type="hidden" name="restore_key" value="{{ r.key }}">
+              <button type="submit" class="btn warn" style="padding:3px 10px; font-size:11px;">Restore</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Standalone delete form, submitted by _del() JS from any row's Delete button -->
+<form method="POST" id="deleteForm" style="display:none;">
+  <input type="hidden" name="action" value="delete_village">
+  <input type="hidden" name="delete_key" id="deleteKey">
+</form>
+
+<script>
+function _del(key, name) {
+  if (!confirm('Delete village "' + name + '"? It will be hidden from the dashboard. You can restore it from the "Deleted villages" section at the bottom.')) return false;
+  document.getElementById('deleteKey').value = key;
+  document.getElementById('deleteForm').submit();
+  return false;
+}
+</script>
 
 </div>
 </body>

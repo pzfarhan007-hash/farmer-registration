@@ -55,9 +55,11 @@ _BASELINE_FALLBACK_LABEL = "no baseline uploaded yet"
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 MONTH_BASELINES_DIR = os.path.join(DATA_DIR, "baselines")
 TARGETS_OVERRIDE_FILE = os.path.join(DATA_DIR, "targets.json")
-PENDENCY_OVERRIDE_FILE = os.path.join(DATA_DIR, "pendency.json")  # v38
+PENDENCY_OVERRIDE_FILE = os.path.join(DATA_DIR, "pendency.json")
 VILLAGE_TEHSIL_OVERRIDE_FILE = os.path.join(DATA_DIR, "village_tehsil_overrides.json")
 UNBUCKETED_FILE = os.path.join(DATA_DIR, "unbucketed.json")
+DELETED_VILLAGES_FILE = os.path.join(DATA_DIR, "deleted_villages.json")   # v39
+ADDED_VILLAGES_FILE   = os.path.join(DATA_DIR, "added_villages.json")     # v39
 CSV_ALIAS_FILE = os.path.join(DATA_DIR, "csv_village_aliases.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "portal_settings.json")
 
@@ -136,6 +138,18 @@ def load_targets_overrides():
 
 def load_pendency_overrides():
     return _read_json(PENDENCY_OVERRIDE_FILE, {})
+
+def load_deleted_villages():
+    """{norm_key: true} — admin-deleted villages. Hidden from dashboard and
+    targets admin regardless of CSV data. Used to retire a wrong-spelled master
+    entry after adding a new one with the correct (CSV) spelling."""
+    return _read_json(DELETED_VILLAGES_FILE, {})
+
+def load_added_villages():
+    """{norm_key: {tehsil, village, target, pendency}} — admin-added villages
+    (not in master list). Lets the admin introduce AGRISTACK-spelled entries
+    so CSV rows attach cleanly."""
+    return _read_json(ADDED_VILLAGES_FILE, {})
 
 def load_village_tehsil_overrides():
     """{norm_key: canonical_tehsil_name} — correct AGRISTACK-misassigned tehsils."""
@@ -391,13 +405,17 @@ def per_day_additions(per_date, sorted_dates):
 # =========================================================================
 
 def effective_targets():
-    """Yield (tehsil, village, target, pendency) for every known village
-    (master + target-overrides + pendency-overrides)."""
-    target_overrides  = load_targets_overrides()
+    """Yield (tehsil, village, target, pendency) for every known village.
+    Union of master list + admin-added + override maps, minus admin-deleted."""
+    target_overrides   = load_targets_overrides()
     pendency_overrides = load_pendency_overrides()
+    added_villages     = load_added_villages()
+    deleted_villages   = load_deleted_villages()
     seen = set()
     for t, v, tg, pd in DEFAULT_TARGETS:
         k = norm_key(t, v)
+        if k in deleted_villages:
+            continue
         seen.add(k)
         cur_t = target_overrides.get(k, tg)
         cur_p = pendency_overrides.get(k, pd)
@@ -406,8 +424,27 @@ def effective_targets():
         try: cur_p = int(cur_p)
         except Exception: cur_p = pd
         yield (t, v, cur_t, cur_p)
+
+    # Admin-added villages (preserved display name + original tehsil pick)
+    for k, info in added_villages.items():
+        if k in seen or k in deleted_villages:
+            continue
+        t = info.get("tehsil", "")
+        v = info.get("village", "")
+        tg = int(info.get("target", 0) or 0)
+        pd = int(info.get("pendency", 0) or 0)
+        cur_t = target_overrides.get(k, tg)
+        cur_p = pendency_overrides.get(k, pd)
+        try: cur_t = int(cur_t)
+        except Exception: cur_t = tg
+        try: cur_p = int(cur_p)
+        except Exception: cur_p = pd
+        yield (t, v, cur_t, cur_p)
+        seen.add(k)
+
+    # Loose override keys (legacy — no added-village record)
     for k, cur in target_overrides.items():
-        if k in seen: continue
+        if k in seen or k in deleted_villages: continue
         parts = k.split("||", 1)
         t = parts[0].title() if len(parts) == 2 else ""
         v = parts[1].title() if len(parts) == 2 else k.lstrip("|").title()
@@ -418,9 +455,8 @@ def effective_targets():
         except Exception: cur_p = 0
         yield (t, v, cur, cur_p)
         seen.add(k)
-    # Pendency-only overrides (no target set)
     for k, cur_p in pendency_overrides.items():
-        if k in seen: continue
+        if k in seen or k in deleted_villages: continue
         parts = k.split("||", 1)
         t = parts[0].title() if len(parts) == 2 else ""
         v = parts[1].title() if len(parts) == 2 else k.lstrip("|").title()
@@ -465,6 +501,7 @@ def build_nested_structure():
     # Effective tehsil per village (overrides let admin correct an AGRISTACK miscategorization)
     tehsil_overrides = load_village_tehsil_overrides()
     unbucketed_flags = load_unbucketed_flags()
+    deleted_villages = load_deleted_villages()
 
     # Build target + pendency maps by norm_key (with overrides applied)
     targets = {}
@@ -530,12 +567,14 @@ def build_nested_structure():
             "issuedBaseline": iss_b, "approvedBaseline": app_b,
         }
 
-    # v38 — visibility rule:
-    #   HIDE only if (explicit unbucketed flag) OR (target == 0 AND issued == 0).
-    #   A village with no target but CSV farmer-IDs still shows up so the
-    #   district total remains accurate. Target can be filled in later.
+    # v39 visibility rule:
+    #   HIDE if (admin deleted) OR (explicit unbucketed flag) OR
+    #          (target == 0 AND issued == 0). Admin-deleted wins over CSV data —
+    #   lets admin retire a wrong-spelled master entry so only the CSV-spelled
+    #   new entry remains, de-duplicating the display.
     villages = {k: v for k, v in villages.items()
-                if not unbucketed_flags.get(k)
+                if not deleted_villages.get(k)
+                and not unbucketed_flags.get(k)
                 and (((v.get("target", 0) or 0) > 0) or ((v.get("issued", 0) or 0) > 0))}
 
     # Attach per-village datedCounts (positive daily deltas)
@@ -887,12 +926,102 @@ def admin_month_baselines():
 # Targets admin — tehsil-wise list with per-row tehsil dropdown; target=0 hides
 # =========================================================================
 
+# v39 — add / delete / restore handlers for the admin targets page.
+
+def _commit_file_if_configured(local_path, repo_path, message):
+    if os.environ.get("GH_TOKEN") and os.environ.get("GH_REPO"):
+        try:
+            commit_to_github(local_path, repo_path, message)
+            return None
+        except Exception as e:
+            return "GitHub push failed: {}".format(e)
+    return None
+
+def _admin_add_village():
+    tehsil  = (request.form.get("new_tehsil")  or "").strip()
+    vname   = (request.form.get("new_village") or "").strip()
+    tg_raw  = request.form.get("new_target", "0")
+    pd_raw  = request.form.get("new_pendency", "0")
+    if not tehsil or tehsil not in KUPWARA_TEHSILS:
+        flash("Pick a tehsil for the new village.", "err")
+        return redirect(url_for("edit_targets"))
+    if not vname or len(vname) < 2:
+        flash("Village name is too short.", "err")
+        return redirect(url_for("edit_targets"))
+    try: tg = max(0, int(tg_raw or 0))
+    except: tg = 0
+    try: pd = max(0, int(pd_raw or 0))
+    except: pd = 0
+
+    k = norm_key(tehsil, vname)
+    added = load_added_villages()
+    deleted = load_deleted_villages()
+
+    # If this key was previously deleted, undelete it on add
+    if k in deleted:
+        deleted.pop(k)
+        _write_json(DELETED_VILLAGES_FILE, deleted)
+        _commit_file_if_configured(DELETED_VILLAGES_FILE, "data/deleted_villages.json",
+                                   "admin: restore {} / {} on re-add".format(tehsil, vname))
+
+    added[k] = {"tehsil": tehsil, "village": vname, "target": tg, "pendency": pd}
+    _write_json(ADDED_VILLAGES_FILE, added)
+    err = _commit_file_if_configured(ADDED_VILLAGES_FILE, "data/added_villages.json",
+                                     "admin: add village {} / {}".format(tehsil, vname))
+    _invalidate_dashboard_cache()
+    if err: flash("Saved locally but " + err, "err")
+    else:   flash("Added village: {} / {}".format(tehsil, vname), "ok")
+    return redirect(url_for("edit_targets"))
+
+def _admin_delete_village():
+    vk = (request.form.get("delete_key") or "").strip()
+    if not vk:
+        flash("Missing village key.", "err")
+        return redirect(url_for("edit_targets"))
+    deleted = load_deleted_villages()
+    deleted[vk] = True
+    _write_json(DELETED_VILLAGES_FILE, deleted)
+    err = _commit_file_if_configured(DELETED_VILLAGES_FILE, "data/deleted_villages.json",
+                                     "admin: delete village {}".format(vk))
+    _invalidate_dashboard_cache()
+    if err: flash("Deleted locally but " + err, "err")
+    else:   flash("Deleted village.", "ok")
+    return redirect(url_for("edit_targets"))
+
+def _admin_restore_village():
+    vk = (request.form.get("restore_key") or "").strip()
+    if not vk:
+        flash("Missing village key.", "err")
+        return redirect(url_for("edit_targets"))
+    deleted = load_deleted_villages()
+    if vk in deleted:
+        deleted.pop(vk)
+        _write_json(DELETED_VILLAGES_FILE, deleted)
+        err = _commit_file_if_configured(DELETED_VILLAGES_FILE, "data/deleted_villages.json",
+                                         "admin: restore village {}".format(vk))
+        _invalidate_dashboard_cache()
+        if err: flash("Restored locally but " + err, "err")
+        else:   flash("Village restored.", "ok")
+    return redirect(url_for("edit_targets"))
+
+
 @app.route("/admin/targets", methods=["GET", "POST"])
 @admin_required
 def edit_targets():
     error = None; saved = False
 
     if request.method == "POST":
+        action = (request.form.get("action") or "save").strip()
+
+        # ---- v39: dedicated add / delete / restore actions ----
+        if action == "add_village":
+            return _admin_add_village()
+        if action == "delete_village":
+            return _admin_delete_village()
+        if action == "restore_village":
+            return _admin_restore_village()
+
+        # ---- normal "save all" action ----
         new_targets = {}
         new_pendency = {}
         new_tehsil_overrides = {}
@@ -985,10 +1114,16 @@ def edit_targets():
                 csv_tehsil_by_key[k] = t
 
     pendency_overrides = load_pendency_overrides()
+    deleted_villages   = load_deleted_villages()
+    added_villages     = load_added_villages()
 
-    # Group villages by effective tehsil (CSV / overrides applied)
+    # Collect the display rows. Deleted master villages go to a "recycle bin"
+    # at the bottom (with a Restore button). Admin-added villages join the
+    # main tehsil-wise table alongside master villages.
     rows_by_tehsil = {t: [] for t in KUPWARA_TEHSILS}
+    deleted_rows = []
     seen_keys = set()
+
     for t, v, tg, pd in DEFAULT_TARGETS:
         k = norm_key(t, v)
         seen_keys.add(k)
@@ -1001,25 +1136,61 @@ def edit_targets():
         master_t = canonical_tehsil(t)
         eff_tehsil = tehsil_overrides.get(k,
                         csv_tehsil_by_key.get(k, master_t))
-        rows_by_tehsil.setdefault(eff_tehsil, []).append({
-            "key": k,
-            "village": v,
+        row = {
+            "key": k, "village": v,
             "master_tehsil": canonical_tehsil(t),
             "effective_tehsil": eff_tehsil,
-            "default_target": tg,
-            "current_target": cur_target,
-            "default_pendency": pd,
-            "current_pendency": cur_pend,
+            "default_target": tg, "current_target": cur_target,
+            "default_pendency": pd, "current_pendency": cur_pend,
             "target_overridden": cur_target != tg,
             "pendency_overridden": cur_pend != pd,
             "unbucketed_flag": unbucketed_flags.get(k, False),
             "unbucketed": unbucketed_flags.get(k, False) or (cur_target or 0) <= 0,
             "from_master": True,
-        })
+        }
+        if k in deleted_villages:
+            deleted_rows.append(row)
+        else:
+            rows_by_tehsil.setdefault(eff_tehsil, []).append(row)
 
-    # Admin-added villages (overrides keys not in master list)
+    # Admin-added villages — join the main table.
+    for k, info in added_villages.items():
+        if k in seen_keys: continue
+        seen_keys.add(k)
+        v = info.get("village", "")
+        t_raw = info.get("tehsil", "")
+        tg_default = int(info.get("target", 0) or 0)
+        pd_default = int(info.get("pendency", 0) or 0)
+        cur_target = overrides.get(k, tg_default)
+        try: cur_target = int(cur_target)
+        except: cur_target = tg_default
+        cur_pend = pendency_overrides.get(k, pd_default)
+        try: cur_pend = int(cur_pend)
+        except: cur_pend = pd_default
+        master_t_guess = canonical_tehsil(t_raw) if t_raw else ""
+        eff_tehsil = tehsil_overrides.get(k,
+                        csv_tehsil_by_key.get(k, master_t_guess))
+        row = {
+            "key": k, "village": v,
+            "master_tehsil": None, "effective_tehsil": eff_tehsil,
+            "default_target": tg_default, "current_target": cur_target,
+            "default_pendency": pd_default, "current_pendency": cur_pend,
+            "target_overridden": cur_target != tg_default,
+            "pendency_overridden": cur_pend != pd_default,
+            "unbucketed_flag": unbucketed_flags.get(k, False),
+            "unbucketed": unbucketed_flags.get(k, False) or (cur_target or 0) <= 0,
+            "from_master": False,
+            "admin_added": True,
+        }
+        if k in deleted_villages:
+            deleted_rows.append(row)
+        else:
+            rows_by_tehsil.setdefault(eff_tehsil, []).append(row)
+
+    # Loose override-only keys (legacy — in overrides but neither master nor added)
     for k, cur in overrides.items():
         if k in seen_keys: continue
+        if k in deleted_villages: continue
         parts = k.split("||", 1)
         t_raw = parts[0] if len(parts) == 2 else ""
         v = parts[1].title() if len(parts) == 2 else k.lstrip("|").title()
@@ -1078,6 +1249,7 @@ def edit_targets():
                            total_unbucketed=total_unbkt, total_target=total_target,
                            total_pendency=total_pendency,
                            unknowns=unknowns,
+                           deleted_rows=deleted_rows,
                            error=error, saved=saved)
 
 # =========================================================================
