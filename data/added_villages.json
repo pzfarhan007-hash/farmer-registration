@@ -161,6 +161,12 @@
     "tehsil": "Qaziabad",
     "village": "Pandith Pora"
   },
+  "QAZIABAD||RASRIPORA": {
+    "pendency": 0,
+    "target": 353,
+    "tehsil": "Qaziabad",
+    "village": "Rasri Pora"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
