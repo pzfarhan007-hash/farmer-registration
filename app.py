@@ -1,23 +1,26 @@
 """
-Kupwara Farmer Enrollment Portal
-================================
-Flask app for Render deployment. Sister portal to the Bandipora Farmer ID
-Progress dashboard, without the Camp Director / First Bucket / Pending
-Entries / New Batch concepts.
+Kupwara Farmer Enrollment Portal — v40 (simplified, CSV-authoritative)
+======================================================================
+Flask app for Render deployment.
 
-Data:
-  - data/baselines/YYYY-MM.csv    one per completed month (month-only AGRISTACK)
-  - data/YYYY-MM-DD.csv           daily snapshots for the current month
+Data model
+----------
+* Master list = AGRISTACK monthly CSVs (Aug + Sep + Oct 2026). Only those
+  (tehsil, village) pairs are shown on the portal. All start at target=0 /
+  pendency=0 — admin sets them from the Targets page.
+* Village-name normalization is hard (strip all whitespace/punctuation) so
+  "Lal Pora" and "Lalpora" always match the same row.
+* A village appears on the dashboard IF it is in the master list OR has
+  been added by admin AND it has NOT been deleted. Target zero is fine.
+* Admin can ADD a village (comes in via the Targets page or a daily upload
+  confirmation flow) and DELETE a village (hidden from dashboard).
 
-Admin pages:
-  - /login, /logout, /admin
-  - /upload              daily snapshot upload (current month only)
-  - /admin/month-baselines   upload one CSV per completed month + close month
-  - /admin/targets       tehsil-wise village list; target=0 hides from dashboard
-  - /admin/csv-reconciliation  map AGRISTACK village spellings to portal names
-
-Every village has a tehsil dropdown in the admin targets page so wrong
-tehsil assignments can be corrected on the fly.
+Daily upload flow
+-----------------
+On upload, the server checks each (tehsil, village) in the CSV against the
+master + added lists. If any are new, the upload is HELD in a pending state
+and the admin is asked to confirm a tehsil + target + pendency for each new
+village before the upload is finalized and committed.
 """
 import csv
 import glob
@@ -25,26 +28,24 @@ import json
 import os
 import re
 import secrets as _secrets
+import shutil
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, Response, abort, render_template, request, jsonify, session, redirect, url_for, flash
 
 # =========================================================================
-# BAKED-IN DATA — targets, tehsils (master list for Kupwara district)
-# Everything else (monthly baselines, overrides, aliases) lives on disk.
+# Baked-in: tehsil list + master (tehsil, village) pairs from CSVs
 # =========================================================================
 
 PORTAL_TITLE = "Kupwara District — Farmer Enrollment Dashboard"
 PORTAL_SHORT = "Kupwara Farmer ID Progress"
 DISTRICT_NAME = "Kupwara"
 
-# Default admin login — change in code or via env (ADMIN_USER, ADMIN_PASS).
 DEFAULT_ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 DEFAULT_ADMIN_PASS = os.environ.get("ADMIN_PASS", "Password.1719@")
 
 from default_targets import KUPWARA_TEHSILS, DEFAULT_TARGETS
 
-# Safe fallback when NO monthly baselines exist yet.
 _BASELINE_FALLBACK_DATE  = "2026-07-31"
 _BASELINE_FALLBACK_LABEL = "no baseline uploaded yet"
 
@@ -53,15 +54,12 @@ _BASELINE_FALLBACK_LABEL = "no baseline uploaded yet"
 # =========================================================================
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
-MONTH_BASELINES_DIR = os.path.join(DATA_DIR, "baselines")
-TARGETS_OVERRIDE_FILE = os.path.join(DATA_DIR, "targets.json")
+MONTH_BASELINES_DIR    = os.path.join(DATA_DIR, "baselines")
+PENDING_UPLOADS_DIR    = os.path.join(DATA_DIR, "pending")
+TARGETS_OVERRIDE_FILE  = os.path.join(DATA_DIR, "targets.json")
 PENDENCY_OVERRIDE_FILE = os.path.join(DATA_DIR, "pendency.json")
-VILLAGE_TEHSIL_OVERRIDE_FILE = os.path.join(DATA_DIR, "village_tehsil_overrides.json")
-UNBUCKETED_FILE = os.path.join(DATA_DIR, "unbucketed.json")
-DELETED_VILLAGES_FILE = os.path.join(DATA_DIR, "deleted_villages.json")   # v39
-ADDED_VILLAGES_FILE   = os.path.join(DATA_DIR, "added_villages.json")     # v39
-CSV_ALIAS_FILE = os.path.join(DATA_DIR, "csv_village_aliases.json")
-SETTINGS_FILE = os.path.join(DATA_DIR, "portal_settings.json")
+ADDED_VILLAGES_FILE    = os.path.join(DATA_DIR, "added_villages.json")
+DELETED_VILLAGES_FILE  = os.path.join(DATA_DIR, "deleted_villages.json")
 
 # =========================================================================
 # Flask
@@ -72,53 +70,27 @@ app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", _secrets.token_hex
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 # =========================================================================
-# Normalization / alias helpers
+# Normalization
 # =========================================================================
 
 def norm_name(s):
-    s = (s or "").upper()
-    s = re.sub(r"[^A-Z0-9\s]", " ", s)
-    return re.sub(r"\s+", " ", s).strip()
+    """Hard-normalize a name: strip ALL whitespace and punctuation so spelling
+    drift ("Lal Pora" vs "Lalpora") naturally matches the same key."""
+    return re.sub(r"[^A-Z0-9]", "", (s or "").upper())
 
-# Canonical tehsil names (UPPERCASE-normalized) built from Kupwara master list.
 _TEHSIL_CANONICAL = {norm_name(t): t for t in KUPWARA_TEHSILS}
 
 def canonical_tehsil(t):
-    """Map any tehsil spelling to the canonical display name from the master list."""
     n = norm_name(t)
     return _TEHSIL_CANONICAL.get(n, t)
 
-# v37.2 — village-name-primary keying.
-# AGRISTACK CSV's tehsil assignment is authoritative per the user. 329 of 334
-# master villages have unique names, so for them we key by village name only —
-# whatever tehsil the CSV reports is the one the dashboard displays. For the
-# remaining 5 village names that appear in multiple tehsils (Batapora, Dard
-# Pora, Kawari, Push Wari, Tulwari), both tehsil AND village must still match
-# to disambiguate.
-_DUPLICATE_VILLAGE_NORMS = set()
-def _init_duplicate_village_norms():
-    counts = {}
-    for row in DEFAULT_TARGETS:
-        t, v = row[0], row[1]  # row is (t, v, target, pendency)
-        n = norm_name(v)
-        counts[n] = counts.get(n, 0) + 1
-    _DUPLICATE_VILLAGE_NORMS.update(n for n, c in counts.items() if c > 1)
-_init_duplicate_village_norms()
-
 def norm_key(tehsil, village):
-    n_vil = _apply_village_alias(norm_name(village))
-    if n_vil in _DUPLICATE_VILLAGE_NORMS:
-        return canonical_tehsil(tehsil).upper() + "||" + n_vil
-    return "||" + n_vil   # empty tehsil prefix = unique name, any tehsil matches
-
-def _apply_village_alias(norm_village):
-    """Map a normalized village name to its portal-canonical form via CSV
-    alias overrides. Returns input unchanged if no alias."""
-    aliases = _load_csv_village_aliases()
-    return aliases.get(norm_village, norm_village)
+    """Composite (tehsil, village) key. Same village name under different
+    tehsils is always kept separate — tehsil + hard-normed village name."""
+    return canonical_tehsil(tehsil).upper() + "||" + norm_name(village)
 
 # =========================================================================
-# JSON overrides on disk (committed to GitHub when GH_TOKEN present)
+# JSON overrides
 # =========================================================================
 
 def _read_json(path, default):
@@ -139,51 +111,16 @@ def load_targets_overrides():
 def load_pendency_overrides():
     return _read_json(PENDENCY_OVERRIDE_FILE, {})
 
-def load_deleted_villages():
-    """{norm_key: true} — admin-deleted villages. Hidden from dashboard and
-    targets admin regardless of CSV data. Used to retire a wrong-spelled master
-    entry after adding a new one with the correct (CSV) spelling."""
-    return _read_json(DELETED_VILLAGES_FILE, {})
-
 def load_added_villages():
-    """{norm_key: {tehsil, village, target, pendency}} — admin-added villages
-    (not in master list). Lets the admin introduce AGRISTACK-spelled entries
-    so CSV rows attach cleanly."""
+    """{norm_key: {tehsil, village, target, pendency}}"""
     return _read_json(ADDED_VILLAGES_FILE, {})
 
-def load_village_tehsil_overrides():
-    """{norm_key: canonical_tehsil_name} — correct AGRISTACK-misassigned tehsils."""
-    return _read_json(VILLAGE_TEHSIL_OVERRIDE_FILE, {})
-
-def load_unbucketed_flags():
-    """{norm_key: true} — explicit hide even if target > 0 (rare)."""
-    return _read_json(UNBUCKETED_FILE, {})
-
-def load_settings():
-    return _read_json(SETTINGS_FILE, {})
-
-_csv_alias_cache = {"loaded": False, "data": {}, "mtime": 0}
-def _load_csv_village_aliases():
-    """Cache the alias map with mtime invalidation so we don't stat on every
-    norm_key call."""
-    try:
-        mt = os.path.getmtime(CSV_ALIAS_FILE)
-    except OSError:
-        if _csv_alias_cache["loaded"]:
-            return _csv_alias_cache["data"]
-        _csv_alias_cache.update({"loaded": True, "data": {}, "mtime": 0})
-        return {}
-    if _csv_alias_cache["loaded"] and _csv_alias_cache["mtime"] == mt:
-        return _csv_alias_cache["data"]
-    d = _read_json(CSV_ALIAS_FILE, {})
-    _csv_alias_cache.update({"loaded": True, "data": d, "mtime": mt})
-    return d
-
-def _invalidate_csv_alias_cache():
-    _csv_alias_cache["loaded"] = False
+def load_deleted_villages():
+    """{norm_key: true}"""
+    return _read_json(DELETED_VILLAGES_FILE, {})
 
 # =========================================================================
-# Parse one AGRISTACK snapshot CSV
+# CSV parsing
 # =========================================================================
 
 TEHSIL_HEADERS  = ["subdistrictname", "sub_district_name", "subdistrict", "tehsil"]
@@ -201,48 +138,60 @@ def find_header_idx(header, options):
 def normalize_status(s):
     return (s or "").strip().upper()
 
-_snapshot_parse_cache = {}   # path -> (mtime, counts)
+_snapshot_parse_cache = {}
 
 def parse_date_from_filename(path):
     name = os.path.splitext(os.path.basename(path))[0]
     m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$|^(\d{2})[.\-](\d{2})[.\-](\d{4})$", name)
-    if not m:
-        return None
+    if not m: return None
     g = m.groups()
-    if g[0]:
-        return "{}-{}-{}".format(g[0], g[1], g[2])
-    return "{}-{}-{}".format(g[5], g[4], g[3])
+    return "{}-{}-{}".format(g[0], g[1], g[2]) if g[0] else "{}-{}-{}".format(g[5], g[4], g[3])
 
 def parse_snapshot_csv(path):
-    """Parse one CSV -> {village_key: {issued, approved, tehsil, village}} aggregated."""
+    """Return {village_key: {issued, approved, tehsil, village}}."""
     counts = {}
     with open(path, "r", encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
-        try:
-            header = next(reader)
-        except StopIteration:
-            return counts
+        try: header = next(reader)
+        except StopIteration: return counts
         t_idx = find_header_idx(header, TEHSIL_HEADERS)
         v_idx = find_header_idx(header, VILLAGE_HEADERS)
         s_idx = find_header_idx(header, STATUS_HEADERS)
         if t_idx < 0 or v_idx < 0 or s_idx < 0:
             raise ValueError("{}: header must have tehsil, village and status columns".format(os.path.basename(path)))
         for row in reader:
-            if not row or len(row) <= max(t_idx, v_idx, s_idx):
-                continue
+            if not row or len(row) <= max(t_idx, v_idx, s_idx): continue
             tehsil = (row[t_idx] or "").strip()
             village = (row[v_idx] or "").strip()
-            if not tehsil or not village:
-                continue
+            if not tehsil or not village: continue
             key = norm_key(tehsil, village)
-            rec = counts.setdefault(key, {
-                "tehsil": tehsil, "village": village,
-                "issued": 0, "approved": 0,
-            })
+            rec = counts.setdefault(key, {"tehsil": tehsil, "village": village, "issued": 0, "approved": 0})
             rec["issued"] += 1
             if normalize_status(row[s_idx]) == "APPROVED":
                 rec["approved"] += 1
     return counts
+
+def villages_in_csv(path):
+    """Return a set of norm_keys present in the CSV. Lightweight for new-village detection."""
+    seen = set()
+    display = {}
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if not header: return seen, display
+        t_idx = find_header_idx(header, TEHSIL_HEADERS)
+        v_idx = find_header_idx(header, VILLAGE_HEADERS)
+        if t_idx < 0 or v_idx < 0: return seen, display
+        for row in reader:
+            if not row or len(row) <= max(t_idx, v_idx): continue
+            tehsil = (row[t_idx] or "").strip()
+            village = (row[v_idx] or "").strip()
+            if not tehsil or not village: continue
+            k = norm_key(tehsil, village)
+            if k not in seen:
+                seen.add(k)
+                display[k] = {"tehsil": tehsil, "village": village}
+    return seen, display
 
 # =========================================================================
 # Monthly baselines
@@ -256,19 +205,15 @@ def _month_end_date(ym):
     return (nxt - timedelta(days=1)).strftime("%Y-%m-%d")
 
 def _month_label(ym):
-    try:
-        return datetime.strptime(ym + "-01", "%Y-%m-%d").strftime("%B %Y")
-    except Exception:
-        return ym
+    try: return datetime.strptime(ym + "-01", "%Y-%m-%d").strftime("%B %Y")
+    except: return ym
 
 def list_month_baseline_files():
     out = []
-    if not os.path.isdir(MONTH_BASELINES_DIR):
-        return out
+    if not os.path.isdir(MONTH_BASELINES_DIR): return out
     for path in sorted(glob.glob(os.path.join(MONTH_BASELINES_DIR, "*.csv"))):
         m = _MONTH_FILE_RE.match(os.path.basename(path))
-        if m:
-            out.append(("{}-{}".format(m.group(1), m.group(2)), path))
+        if m: out.append(("{}-{}".format(m.group(1), m.group(2)), path))
     out.sort(key=lambda x: x[0])
     return out
 
@@ -279,8 +224,7 @@ def load_month_baselines():
         try:
             mt = os.path.getmtime(path)
             cached = _snapshot_parse_cache.get(path)
-            if cached and cached[0] == mt:
-                snap = cached[1]
+            if cached and cached[0] == mt: snap = cached[1]
             else:
                 snap = parse_snapshot_csv(path)
                 _snapshot_parse_cache[path] = (mt, snap)
@@ -304,14 +248,11 @@ def load_month_baselines():
 
 def effective_baseline_date():
     files = list_month_baseline_files()
-    if not files:
-        return _BASELINE_FALLBACK_DATE
-    return _month_end_date(files[-1][0])
+    return _month_end_date(files[-1][0]) if files else _BASELINE_FALLBACK_DATE
 
 def effective_baseline_label():
     files = list_month_baseline_files()
-    if not files:
-        return _BASELINE_FALLBACK_LABEL
+    if not files: return _BASELINE_FALLBACK_LABEL
     return "through " + datetime.strptime(effective_baseline_date(), "%Y-%m-%d").strftime("%d %b %Y")
 
 def baseline_counts():
@@ -321,13 +262,12 @@ def baseline_counts():
             for k, v in sum_counts.items()}
 
 # =========================================================================
-# Discover daily snapshots + build cumulative state
+# Daily snapshots + cumulative state
 # =========================================================================
 
 def discover_snapshots():
     snaps = []
-    if not os.path.isdir(DATA_DIR):
-        return snaps
+    if not os.path.isdir(DATA_DIR): return snaps
     cutoff = effective_baseline_date()
     for path in sorted(glob.glob(os.path.join(DATA_DIR, "*.csv"))):
         d = parse_date_from_filename(path)
@@ -337,7 +277,6 @@ def discover_snapshots():
     return snaps
 
 def _merge(dst, src):
-    """Max-merge within current-month daily snapshots (they grow monotonically)."""
     for k, v in src.items():
         prev = dst.get(k, {})
         dst[k] = {
@@ -348,7 +287,7 @@ def _merge(dst, src):
         }
 
 def build_state():
-    """Baseline + current-month running max, summed per village. See v37.1 notes."""
+    """Baseline + current-month running max, summed per village (v37.1 model)."""
     base = baseline_counts()
     baseline_date = effective_baseline_date()
     per_date = {baseline_date: {k: dict(v) for k, v in base.items()}}
@@ -359,8 +298,7 @@ def build_state():
         try:
             mt = os.path.getmtime(path)
             cached = _snapshot_parse_cache.get(path)
-            if cached and cached[0] == mt:
-                snap = cached[1]
+            if cached and cached[0] == mt: snap = cached[1]
             else:
                 snap = parse_snapshot_csv(path)
                 _snapshot_parse_cache[path] = (mt, snap)
@@ -401,87 +339,36 @@ def per_day_additions(per_date, sorted_dates):
     return out
 
 # =========================================================================
-# Effective targets (default + overrides)
+# Effective master list
 # =========================================================================
 
-def effective_targets():
-    """Yield (tehsil, village, target, pendency) for every known village.
-    Union of master list + admin-added + override maps, minus admin-deleted."""
-    target_overrides   = load_targets_overrides()
-    pendency_overrides = load_pendency_overrides()
-    added_villages     = load_added_villages()
-    deleted_villages   = load_deleted_villages()
+def effective_master():
+    """Yield (key, tehsil, village, target, pendency, source) for the full
+    master list: CSV-derived villages + admin-added, minus admin-deleted.
+    source = 'csv' or 'added'."""
+    targets_o   = load_targets_overrides()
+    pendency_o  = load_pendency_overrides()
+    added       = load_added_villages()
+    deleted     = load_deleted_villages()
     seen = set()
-    for t, v, tg, pd in DEFAULT_TARGETS:
+    for t, v, tg_default, pd_default in DEFAULT_TARGETS:
         k = norm_key(t, v)
-        if k in deleted_villages:
-            continue
+        if k in deleted: continue
         seen.add(k)
-        cur_t = target_overrides.get(k, tg)
-        cur_p = pendency_overrides.get(k, pd)
-        try: cur_t = int(cur_t)
-        except Exception: cur_t = tg
-        try: cur_p = int(cur_p)
-        except Exception: cur_p = pd
-        yield (t, v, cur_t, cur_p)
-
-    # Admin-added villages (preserved display name + original tehsil pick)
-    for k, info in added_villages.items():
-        if k in seen or k in deleted_villages:
-            continue
+        tg = int(targets_o.get(k, tg_default) or 0)
+        pd = int(pendency_o.get(k, pd_default) or 0)
+        yield (k, canonical_tehsil(t), v, tg, pd, "csv")
+    for k, info in added.items():
+        if k in seen or k in deleted: continue
         t = info.get("tehsil", "")
         v = info.get("village", "")
-        tg = int(info.get("target", 0) or 0)
-        pd = int(info.get("pendency", 0) or 0)
-        cur_t = target_overrides.get(k, tg)
-        cur_p = pendency_overrides.get(k, pd)
-        try: cur_t = int(cur_t)
-        except Exception: cur_t = tg
-        try: cur_p = int(cur_p)
-        except Exception: cur_p = pd
-        yield (t, v, cur_t, cur_p)
+        tg = int(targets_o.get(k, info.get("target", 0)) or 0)
+        pd = int(pendency_o.get(k, info.get("pendency", 0)) or 0)
+        yield (k, canonical_tehsil(t), v, tg, pd, "added")
         seen.add(k)
-
-    # Loose override keys (legacy — no added-village record)
-    for k, cur in target_overrides.items():
-        if k in seen or k in deleted_villages: continue
-        parts = k.split("||", 1)
-        t = parts[0].title() if len(parts) == 2 else ""
-        v = parts[1].title() if len(parts) == 2 else k.lstrip("|").title()
-        try: cur = int(cur)
-        except Exception: cur = 0
-        cur_p = pendency_overrides.get(k, 0)
-        try: cur_p = int(cur_p)
-        except Exception: cur_p = 0
-        yield (t, v, cur, cur_p)
-        seen.add(k)
-    for k, cur_p in pendency_overrides.items():
-        if k in seen or k in deleted_villages: continue
-        parts = k.split("||", 1)
-        t = parts[0].title() if len(parts) == 2 else ""
-        v = parts[1].title() if len(parts) == 2 else k.lstrip("|").title()
-        try: cur_p = int(cur_p)
-        except Exception: cur_p = 0
-        yield (t, v, 0, cur_p)
-        seen.add(k)
-
-def villages_seen_in_uploads():
-    """{norm_key: {tehsil, village}} for any village encountered in a baseline
-    or a daily snapshot. Drives the 'unknown village' section on the targets
-    page. First-seen display name wins."""
-    seen = {}
-    for _, path in list_month_baseline_files() + discover_snapshots():
-        try:
-            snap = parse_snapshot_csv(path)
-        except Exception:
-            continue
-        for k, v in snap.items():
-            if k not in seen:
-                seen[k] = {"tehsil": v["tehsil"], "village": v["village"]}
-    return seen
 
 # =========================================================================
-# Nested view shape (for dashboard.html)
+# Dashboard build
 # =========================================================================
 
 _dashboard_cache = {"ts": 0, "data": None}
@@ -497,149 +384,52 @@ def build_nested_structure():
         return _dashboard_cache["data"]
 
     cumulative, per_date, sorted_dates, errors = build_state()
-
-    # Effective tehsil per village (overrides let admin correct an AGRISTACK miscategorization)
-    tehsil_overrides = load_village_tehsil_overrides()
-    unbucketed_flags = load_unbucketed_flags()
-    deleted_villages = load_deleted_villages()
-
-    # Build target + pendency maps by norm_key (with overrides applied)
-    targets = {}
-    pendencies = {}
-    display = {}
-    for t, v, tg, pd in effective_targets():
-        k = norm_key(t, v)
-        targets[k] = tg
-        pendencies[k] = pd
-        display[k] = (canonical_tehsil(t), v)
-
     baseline_by_key = baseline_counts()
-    def _bl(key):
-        rec = baseline_by_key.get(key)
-        return (rec["issued"], rec["approved"]) if rec else (0, 0)
 
-    # v37.2 — tehsil display priority:
-    #   1. Admin manual override (admin used the targets-page dropdown)
-    #   2. AGRISTACK CSV tehsil (if the village has CSV data and the CSV tehsil
-    #      is a valid Kupwara tehsil)
-    #   3. Master-list tehsil (xlsx), as a last resort for villages with no
-    #      CSV data yet
-    def _effective_tehsil(key, cumrec, master_disp_t):
-        if key in tehsil_overrides:
-            return tehsil_overrides[key]
-        if cumrec:
-            csv_t = canonical_tehsil(cumrec.get("tehsil", ""))
-            if csv_t in KUPWARA_TEHSILS:
-                return csv_t
-        return master_disp_t
-
-    # All villages: master targets ∪ cumulative-seen
+    # Build villages dict from MASTER LIST ONLY. Every master village appears,
+    # regardless of target or issued. Attached CSV counts (cumulative) are the
+    # farmer-ID totals; villages without CSV data get zero counts.
     villages = {}
-    for key, tgt in targets.items():
-        rec = cumulative.get(key)
-        iss_b, app_b = _bl(key)
-        master_t, disp_v = display.get(key, ("", ""))
-        disp_t = _effective_tehsil(key, rec, master_t)
-        pending = pendencies.get(key, 0)
-        if rec:
-            villages[key] = {
-                "tehsil": disp_t, "village": disp_v, "target": tgt,
-                "pendency": pending,
-                "issued": rec["issued"], "approved": rec["approved"],
-                "issuedBaseline": iss_b, "approvedBaseline": app_b,
-            }
-        else:
-            villages[key] = {
-                "tehsil": disp_t, "village": disp_v, "target": tgt,
-                "pendency": pending,
-                "issued": iss_b, "approved": app_b,
-                "issuedBaseline": iss_b, "approvedBaseline": app_b,
-            }
-
-    for key, rec in cumulative.items():
-        if key in villages: continue
-        iss_b, app_b = _bl(key)
-        disp_t = _effective_tehsil(key, rec, rec["tehsil"])
-        villages[key] = {
-            "tehsil": disp_t, "village": rec["village"], "target": 0,
-            "pendency": pendencies.get(key, 0),
-            "issued": rec["issued"], "approved": rec["approved"],
+    for k, tehsil, vname, tg, pd, source in effective_master():
+        rec = cumulative.get(k)
+        iss_b = baseline_by_key.get(k, {}).get("issued", 0)
+        app_b = baseline_by_key.get(k, {}).get("approved", 0)
+        villages[k] = {
+            "tehsil": tehsil, "village": vname,
+            "target": tg, "pendency": pd,
+            "issued":   rec["issued"]   if rec else iss_b,
+            "approved": rec["approved"] if rec else app_b,
             "issuedBaseline": iss_b, "approvedBaseline": app_b,
+            "source": source,
         }
 
-    # v39 visibility rule:
-    #   HIDE if (admin deleted) OR (explicit unbucketed flag) OR
-    #          (target == 0 AND issued == 0).
-    villages = {k: v for k, v in villages.items()
-                if not deleted_villages.get(k)
-                and not unbucketed_flags.get(k)
-                and (((v.get("target", 0) or 0) > 0) or ((v.get("issued", 0) or 0) > 0))}
-
-    # v39.1 — AUTO-MERGE entries that are the same village under different
-    # spellings. Master list uses "Dardpora" / "Lalpora" (no space); AGRISTACK
-    # CSV uses "Dard Pora" / "Lal Pora" (with space). Without this merge the
-    # dashboard would show both as separate rows — one with only a target, the
-    # other with only CSV farmer-ID counts. Merge key = (effective tehsil,
-    # village name stripped of all whitespace and punctuation).
-    def _strip(s):
-        return re.sub(r"[^A-Z0-9]", "", (s or "").upper())
-    merge_primary = {}  # (tehsil_canon, stripped_name) -> primary key (original norm_key)
-    merge_map = {}      # original norm_key -> primary key (identity if itself is primary)
-    # Preference order for "primary": the key with the highest target. Ties go
-    # to the first-seen (so sort predictably).
-    _order = sorted(villages.items(), key=lambda kv: -(kv[1].get("target", 0) or 0))
-    for k, v in _order:
-        mk = (canonical_tehsil(v.get("tehsil", "")), _strip(v.get("village", "")))
-        if mk not in merge_primary:
-            merge_primary[mk] = k
-            merge_map[k] = k
-        else:
-            merge_map[k] = merge_primary[mk]
-    # Fold non-primary rows into their primary; then drop them.
-    for k, primary in merge_map.items():
-        if k == primary: continue
-        prev = villages[primary]; v = villages[k]
-        prev["target"]           = max(prev.get("target", 0),   v.get("target", 0))
-        prev["pendency"]         = max(prev.get("pendency", 0), v.get("pendency", 0))
-        prev["issued"]           += v.get("issued", 0)
-        prev["approved"]         += v.get("approved", 0)
-        prev["issuedBaseline"]   += v.get("issuedBaseline", 0)
-        prev["approvedBaseline"] += v.get("approvedBaseline", 0)
-    villages = {k: v for k, v in villages.items() if merge_map.get(k, k) == k}
-
-    # Attach per-village datedCounts (positive daily deltas).
-    # Route each original-key delta through merge_map so two merged rows sum
-    # into a single primary dated entry.
+    # Per-village dated counts (positive deltas each day)
     daily = per_day_additions(per_date, sorted_dates)
     for d, data in daily.items():
         for vk, delta in data["by_village"].items():
-            target_key = merge_map.get(vk, vk)
-            if target_key in villages and delta > 0:
-                villages[target_key].setdefault("datedCounts", {})
-                slot = villages[target_key]["datedCounts"].setdefault(d, {"issued": 0, "approved": 0})
+            if vk in villages and delta > 0:
+                villages[vk].setdefault("datedCounts", {})
+                slot = villages[vk]["datedCounts"].setdefault(d, {"issued": 0, "approved": 0})
                 slot["issued"] += delta
-    # Approvals per date
     for i, d in enumerate(sorted_dates):
         current = per_date[d]
         for key, rec in current.items():
-            target_key = merge_map.get(key, key)
-            if target_key not in villages: continue
-            if i == 0:
-                a_delta = rec["approved"]
+            if key not in villages: continue
+            if i == 0: a_delta = rec["approved"]
             else:
                 prev_d = per_date[sorted_dates[i-1]]
                 a_delta = rec["approved"] - prev_d.get(key, {}).get("approved", 0)
             if a_delta > 0:
-                villages[target_key].setdefault("datedCounts", {})
-                slot = villages[target_key]["datedCounts"].setdefault(d, {"issued": 0, "approved": 0})
+                villages[key].setdefault("datedCounts", {})
+                slot = villages[key]["datedCounts"].setdefault(d, {"issued": 0, "approved": 0})
                 slot["approved"] += a_delta
     for v in villages.values():
         v.setdefault("datedCounts", {})
 
-    # Group by canonical tehsil
+    # Group by tehsil
     tehsils = {t: {"tehsil": t, "target": 0, "pendency": 0, "issued": 0, "approved": 0,
-                   "issuedBaseline": 0, "approvedBaseline": 0,
-                   "villages": []} for t in KUPWARA_TEHSILS}
+                   "issuedBaseline": 0, "approvedBaseline": 0, "villages": []}
+               for t in KUPWARA_TEHSILS}
     for key, v in villages.items():
         t = canonical_tehsil(v["tehsil"])
         if t not in tehsils:
@@ -654,10 +444,9 @@ def build_nested_structure():
         obj["approvedBaseline"] += v["approvedBaseline"]
         obj["villages"].append(v)
 
-    # Sort villages within each tehsil by issue % desc
     for t in tehsils.values():
-        t["villages"].sort(key=lambda v: -(v["issued"]/v["target"]) if v["target"] > 0 else -2)
-    # Drop tehsils with zero villages visible (optional — keeps dashboard tidy)
+        t["villages"].sort(key=lambda v: (-(v["issued"]/v["target"]) if v["target"] > 0 else -2,
+                                          v["village"].upper()))
     tehsil_list = [t for t in tehsils.values() if t["villages"]]
     tehsil_list.sort(key=lambda t: -t["issued"])
 
@@ -667,35 +456,26 @@ def build_nested_structure():
     last5 = [{"date": d, "total": daily[d]["total"]} for d in recent_dates]
 
     result = {
-        "tehsils": tehsil_list,
-        "last5": last5,
+        "tehsils": tehsil_list, "last5": last5,
         "minDate": sorted_dates[0] if sorted_dates else _baseline_date,
         "maxDate": sorted_dates[-1] if sorted_dates else _baseline_date,
-        "baselineDate": _baseline_date,
-        "baselineLabel": _baseline_label,
+        "baselineDate": _baseline_date, "baselineLabel": _baseline_label,
         "generated": datetime.utcnow().isoformat() + "Z",
         "snapshotDates": [d for d in sorted_dates if d > _baseline_date],
-        "errors": errors,
-        "portalTitle": PORTAL_TITLE,
-        "districtName": DISTRICT_NAME,
+        "errors": errors, "portalTitle": PORTAL_TITLE, "districtName": DISTRICT_NAME,
     }
     _dashboard_cache.update({"ts": now, "data": result})
     return result
 
 # =========================================================================
-# Login / admin session
+# Login / admin
 # =========================================================================
 
-def _is_admin():
-    return bool(session.get("admin"))
+def _is_admin(): return bool(session.get("admin"))
 
 @app.context_processor
 def _ctx():
-    return {
-        "is_admin":    _is_admin(),
-        "portal_title": PORTAL_TITLE,
-        "portal_short": PORTAL_SHORT,
-    }
+    return {"is_admin": _is_admin(), "portal_title": PORTAL_TITLE, "portal_short": PORTAL_SHORT}
 
 def admin_required(f):
     @wraps(f)
@@ -728,11 +508,10 @@ def admin():
     return render_template("admin.html",
                            baseline_label=effective_baseline_label(),
                            baseline_date=effective_baseline_date(),
-                           tehsils=KUPWARA_TEHSILS,
-                           n_villages=len(DEFAULT_TARGETS))
+                           tehsils=KUPWARA_TEHSILS, n_villages=len(DEFAULT_TARGETS))
 
 # =========================================================================
-# Dashboard + health
+# Dashboard + utilities
 # =========================================================================
 
 @app.route("/")
@@ -746,13 +525,11 @@ def health():
 @app.template_filter("short_date")
 def short_date_filter(ymd):
     if not ymd or len(ymd) < 10: return ymd or ""
-    try:
-        return datetime.strptime(ymd[:10], "%Y-%m-%d").strftime("%d %b '%y")
-    except Exception:
-        return ymd
+    try: return datetime.strptime(ymd[:10], "%Y-%m-%d").strftime("%d %b '%y")
+    except: return ymd
 
 # =========================================================================
-# Upload daily snapshot
+# Daily upload + new-village confirmation flow
 # =========================================================================
 
 def _parse_date_input(raw):
@@ -763,17 +540,33 @@ def _parse_date_input(raw):
     if m: return "{}-{}-{}".format(m.group(3), m.group(2), m.group(1))
     return None
 
+def _known_master_keys():
+    """Set of norm_keys currently in the master list (CSV + added, minus deleted)."""
+    return {k for k, *_ in effective_master()}
+
 @app.route("/upload", methods=["GET", "POST"])
 @admin_required
 def upload():
     error = None; saved = None; replaced_date = None
     baseline_date = effective_baseline_date()
+    pending_info = None   # non-None → render the "confirm new villages" form
+
     if request.method == "POST":
+        action = (request.form.get("action") or "upload").strip()
+
+        # ---- Finalize a pending upload after admin filled in new-village info ----
+        if action == "confirm_pending":
+            return _finalize_pending_upload()
+
+        # ---- Cancel a pending upload ----
+        if action == "cancel_pending":
+            return _cancel_pending_upload()
+
+        # ---- Normal upload: parse, check for new villages, maybe stage ----
         date = _parse_date_input(request.form.get("date", ""))
         if not date or date <= baseline_date:
             error = ("Date must be in dd-mm-yyyy and after {} (the latest closed-month "
-                     "baseline). Pre-baseline months go through the Monthly Baselines "
-                     "page.").format(baseline_date)
+                     "baseline).").format(baseline_date)
         else:
             out_path = os.path.join(DATA_DIR, date + ".csv")
             already_exists = os.path.exists(out_path)
@@ -785,35 +578,126 @@ def upload():
                 if not f or not f.filename:
                     error = "Pick a CSV file."
                 else:
-                    os.makedirs(DATA_DIR, exist_ok=True)
-                    f.save(out_path)
-                    try: parse_snapshot_csv(out_path)
+                    # Stage the upload first, then parse for new villages
+                    os.makedirs(PENDING_UPLOADS_DIR, exist_ok=True)
+                    pending_path = os.path.join(PENDING_UPLOADS_DIR, date + ".csv")
+                    f.save(pending_path)
+                    try:
+                        parse_snapshot_csv(pending_path)  # validate
                     except Exception as e:
-                        os.remove(out_path); error = "That CSV didn't parse: {}".format(e)
+                        try: os.remove(pending_path)
+                        except OSError: pass
+                        error = "That CSV didn't parse: {}".format(e)
                     else:
-                        saved = date + ".csv"
-                        if already_exists: replaced_date = date
-                        if os.environ.get("GH_TOKEN") and os.environ.get("GH_REPO"):
-                            try:
-                                verb = "replace" if already_exists else "add"
-                                commit_to_github(out_path, "data/" + date + ".csv",
-                                                 "data: {} snapshot for {}".format(verb, date))
-                                saved += " (committed to GitHub)"
-                            except Exception as e:
-                                error = "Saved locally but GitHub push failed: {}".format(e)
-                        try: _snapshot_parse_cache.pop(out_path, None)
-                        except Exception: pass
-                        _invalidate_dashboard_cache()
+                        keys_in_csv, display = villages_in_csv(pending_path)
+                        known = _known_master_keys()
+                        new_keys = [k for k in keys_in_csv if k not in known]
+                        if new_keys:
+                            # Stash the metadata so the confirmation form knows
+                            # which pending file + date to work with.
+                            session["pending_upload"] = {
+                                "date": date,
+                                "replace": already_exists,
+                                "new_keys": new_keys,
+                            }
+                            pending_info = {
+                                "date": date,
+                                "replace": already_exists,
+                                "new_villages": [{
+                                    "key": k,
+                                    "tehsil": display[k]["tehsil"],
+                                    "village": display[k]["village"],
+                                } for k in new_keys],
+                            }
+                        else:
+                            # No new villages — finalize immediately.
+                            shutil.move(pending_path, out_path)
+                            saved, error = _commit_snapshot(date, out_path, already_exists)
+                            if already_exists: replaced_date = date
+
     existing = [d for d, _ in discover_snapshots()]
     return render_template("upload.html",
                            baseline_date=baseline_date,
                            baseline_label=effective_baseline_label(),
                            existing_dates=existing,
                            replaced_date=replaced_date,
+                           pending=pending_info,
+                           tehsils=KUPWARA_TEHSILS,
                            error=error, saved=saved)
 
+def _commit_snapshot(date, out_path, already_exists):
+    saved = date + ".csv"; error = None
+    if os.environ.get("GH_TOKEN") and os.environ.get("GH_REPO"):
+        try:
+            verb = "replace" if already_exists else "add"
+            commit_to_github(out_path, "data/" + date + ".csv",
+                             "data: {} snapshot for {}".format(verb, date))
+            saved += " (committed to GitHub)"
+        except Exception as e:
+            error = "Saved locally but GitHub push failed: {}".format(e)
+    try: _snapshot_parse_cache.pop(out_path, None)
+    except Exception: pass
+    _invalidate_dashboard_cache()
+    return saved, error
+
+def _finalize_pending_upload():
+    """Called when admin submits the new-village confirmation form. Saves the
+    villages the admin named, moves the pending CSV into data/, and commits."""
+    pend = session.get("pending_upload")
+    if not pend:
+        flash("No pending upload found — maybe it expired. Please upload again.", "err")
+        return redirect(url_for("upload"))
+    date       = pend["date"]
+    replace    = pend["replace"]
+    new_keys   = pend["new_keys"]
+    pending_path = os.path.join(PENDING_UPLOADS_DIR, date + ".csv")
+    if not os.path.exists(pending_path):
+        session.pop("pending_upload", None)
+        flash("Pending CSV was lost on disk. Please upload again.", "err")
+        return redirect(url_for("upload"))
+
+    added = load_added_villages()
+    for k in new_keys:
+        tehsil = (request.form.get("new_tehsil::" + k) or "").strip()
+        vname  = (request.form.get("new_village::" + k) or "").strip()
+        try: tg = max(0, int(request.form.get("new_target::" + k) or 0))
+        except: tg = 0
+        try: pd = max(0, int(request.form.get("new_pendency::" + k) or 0))
+        except: pd = 0
+        if not tehsil: tehsil = ""     # best-effort fallback
+        if not vname:  vname  = ""
+        added[k] = {"tehsil": tehsil, "village": vname, "target": tg, "pendency": pd}
+    _write_json(ADDED_VILLAGES_FILE, added)
+
+    out_path = os.path.join(DATA_DIR, date + ".csv")
+    try:
+        shutil.move(pending_path, out_path)
+    except Exception as e:
+        flash("Could not move pending CSV into place: {}".format(e), "err")
+        return redirect(url_for("upload"))
+    saved_msg, err = _commit_snapshot(date, out_path, replace)
+    if os.environ.get("GH_TOKEN") and os.environ.get("GH_REPO"):
+        try:
+            commit_to_github(ADDED_VILLAGES_FILE, "data/added_villages.json",
+                             "admin: add {} new village(s) from {} upload".format(len(new_keys), date))
+        except Exception as e:
+            err = "Saved snapshot but added_villages commit failed: {}".format(e)
+
+    session.pop("pending_upload", None)
+    if err: flash("Upload saved. " + err, "err")
+    else:   flash("Upload saved: {} — {} new village(s) added.".format(saved_msg, len(new_keys)), "ok")
+    return redirect(url_for("upload"))
+
+def _cancel_pending_upload():
+    pend = session.pop("pending_upload", None)
+    if pend:
+        try: os.remove(os.path.join(PENDING_UPLOADS_DIR, pend["date"] + ".csv"))
+        except OSError: pass
+    flash("Pending upload cancelled.", "ok")
+    return redirect(url_for("upload"))
+
 # =========================================================================
-# Monthly Baselines admin
+# Monthly Baselines
 # =========================================================================
 
 def _slots_to_show():
@@ -826,8 +710,7 @@ def _slots_to_show():
         y, m = latest_ym.split("-"); y = int(y); m = int(m)
         tail = datetime(y+1, 1, 1) if m == 12 else datetime(y, m+1, 1)
         if tail > end: end = tail
-    slots = []
-    cur = base_start
+    slots = []; cur = base_start
     while cur < end:
         slots.append(cur.strftime("%Y-%m"))
         cur = datetime(cur.year+1, 1, 1) if cur.month == 12 else datetime(cur.year, cur.month+1, 1)
@@ -847,8 +730,7 @@ def admin_month_baselines():
                 error = "Pick a month."
             else:
                 f = request.files.get("csv")
-                if not f or not f.filename:
-                    error = "Pick a CSV file for {}.".format(ym)
+                if not f or not f.filename: error = "Pick a CSV file for {}.".format(ym)
                 else:
                     out_path = os.path.join(MONTH_BASELINES_DIR, ym + ".csv")
                     f.save(out_path)
@@ -870,8 +752,7 @@ def admin_month_baselines():
 
         elif action == "delete":
             ym = (request.form.get("month") or "").strip()
-            if not re.match(r"^\d{4}-\d{2}$", ym):
-                error = "Bad month."
+            if not re.match(r"^\d{4}-\d{2}$", ym): error = "Bad month."
             else:
                 out_path = os.path.join(MONTH_BASELINES_DIR, ym + ".csv")
                 if os.path.exists(out_path):
@@ -895,8 +776,7 @@ def admin_month_baselines():
 
         elif action == "close_month":
             snaps = discover_snapshots()
-            if not snaps:
-                error = "No daily snapshots to close. Upload at least one daily CSV first."
+            if not snaps: error = "No daily snapshots to close."
             else:
                 latest_date, latest_path = snaps[-1]
                 ym = latest_date[:7]
@@ -951,303 +831,140 @@ def admin_month_baselines():
         current_month_info = {"latest_date": latest_date, "ym": latest_date[:7],
                               "label": _month_label(latest_date[:7]), "count": len(snaps)}
 
-    return render_template("month_baselines.html",
-                           rows=rows, totals=totals, current_month=current_month_info,
+    return render_template("month_baselines.html", rows=rows, totals=totals,
+                           current_month=current_month_info,
                            baseline_date=effective_baseline_date(),
                            baseline_label=effective_baseline_label(),
                            error=error, saved=saved)
 
 # =========================================================================
-# Targets admin — tehsil-wise list with per-row tehsil dropdown; target=0 hides
+# Targets admin
 # =========================================================================
-
-# v39 — add / delete / restore handlers for the admin targets page.
-
-def _commit_file_if_configured(local_path, repo_path, message):
-    if os.environ.get("GH_TOKEN") and os.environ.get("GH_REPO"):
-        try:
-            commit_to_github(local_path, repo_path, message)
-            return None
-        except Exception as e:
-            return "GitHub push failed: {}".format(e)
-    return None
 
 def _admin_add_village():
     tehsil  = (request.form.get("new_tehsil")  or "").strip()
     vname   = (request.form.get("new_village") or "").strip()
-    tg_raw  = request.form.get("new_target", "0")
-    pd_raw  = request.form.get("new_pendency", "0")
+    try: tg = max(0, int(request.form.get("new_target", 0) or 0))
+    except: tg = 0
+    try: pd = max(0, int(request.form.get("new_pendency", 0) or 0))
+    except: pd = 0
     if not tehsil or tehsil not in KUPWARA_TEHSILS:
-        flash("Pick a tehsil for the new village.", "err")
+        flash("Pick a tehsil.", "err")
         return redirect(url_for("edit_targets"))
     if not vname or len(vname) < 2:
-        flash("Village name is too short.", "err")
+        flash("Village name too short.", "err")
         return redirect(url_for("edit_targets"))
-    try: tg = max(0, int(tg_raw or 0))
-    except: tg = 0
-    try: pd = max(0, int(pd_raw or 0))
-    except: pd = 0
-
     k = norm_key(tehsil, vname)
-    added = load_added_villages()
-    deleted = load_deleted_villages()
-
-    # If this key was previously deleted, undelete it on add
+    added = load_added_villages(); deleted = load_deleted_villages()
     if k in deleted:
-        deleted.pop(k)
-        _write_json(DELETED_VILLAGES_FILE, deleted)
-        _commit_file_if_configured(DELETED_VILLAGES_FILE, "data/deleted_villages.json",
-                                   "admin: restore {} / {} on re-add".format(tehsil, vname))
-
+        deleted.pop(k); _write_json(DELETED_VILLAGES_FILE, deleted)
+        if os.environ.get("GH_TOKEN") and os.environ.get("GH_REPO"):
+            try: commit_to_github(DELETED_VILLAGES_FILE, "data/deleted_villages.json",
+                                  "admin: undelete {} / {}".format(tehsil, vname))
+            except Exception: pass
     added[k] = {"tehsil": tehsil, "village": vname, "target": tg, "pendency": pd}
     _write_json(ADDED_VILLAGES_FILE, added)
-    err = _commit_file_if_configured(ADDED_VILLAGES_FILE, "data/added_villages.json",
-                                     "admin: add village {} / {}".format(tehsil, vname))
+    if os.environ.get("GH_TOKEN") and os.environ.get("GH_REPO"):
+        try: commit_to_github(ADDED_VILLAGES_FILE, "data/added_villages.json",
+                              "admin: add village {} / {}".format(tehsil, vname))
+        except Exception as e: flash("Saved locally but GitHub failed: {}".format(e), "err")
     _invalidate_dashboard_cache()
-    if err: flash("Saved locally but " + err, "err")
-    else:   flash("Added village: {} / {}".format(tehsil, vname), "ok")
+    flash("Added {} / {}.".format(tehsil, vname), "ok")
     return redirect(url_for("edit_targets"))
 
 def _admin_delete_village():
     vk = (request.form.get("delete_key") or "").strip()
     if not vk:
-        flash("Missing village key.", "err")
-        return redirect(url_for("edit_targets"))
-    deleted = load_deleted_villages()
-    deleted[vk] = True
+        flash("Missing village key.", "err"); return redirect(url_for("edit_targets"))
+    deleted = load_deleted_villages(); deleted[vk] = True
     _write_json(DELETED_VILLAGES_FILE, deleted)
-    err = _commit_file_if_configured(DELETED_VILLAGES_FILE, "data/deleted_villages.json",
-                                     "admin: delete village {}".format(vk))
+    if os.environ.get("GH_TOKEN") and os.environ.get("GH_REPO"):
+        try: commit_to_github(DELETED_VILLAGES_FILE, "data/deleted_villages.json",
+                              "admin: delete village {}".format(vk))
+        except Exception as e: flash("Deleted locally but GitHub failed: {}".format(e), "err")
     _invalidate_dashboard_cache()
-    if err: flash("Deleted locally but " + err, "err")
-    else:   flash("Deleted village.", "ok")
+    flash("Village deleted.", "ok")
     return redirect(url_for("edit_targets"))
 
 def _admin_restore_village():
     vk = (request.form.get("restore_key") or "").strip()
     if not vk:
-        flash("Missing village key.", "err")
-        return redirect(url_for("edit_targets"))
+        flash("Missing village key.", "err"); return redirect(url_for("edit_targets"))
     deleted = load_deleted_villages()
     if vk in deleted:
-        deleted.pop(vk)
-        _write_json(DELETED_VILLAGES_FILE, deleted)
-        err = _commit_file_if_configured(DELETED_VILLAGES_FILE, "data/deleted_villages.json",
-                                         "admin: restore village {}".format(vk))
+        deleted.pop(vk); _write_json(DELETED_VILLAGES_FILE, deleted)
+        if os.environ.get("GH_TOKEN") and os.environ.get("GH_REPO"):
+            try: commit_to_github(DELETED_VILLAGES_FILE, "data/deleted_villages.json",
+                                  "admin: restore village {}".format(vk))
+            except Exception: pass
         _invalidate_dashboard_cache()
-        if err: flash("Restored locally but " + err, "err")
-        else:   flash("Village restored.", "ok")
+    flash("Village restored.", "ok")
     return redirect(url_for("edit_targets"))
-
 
 @app.route("/admin/targets", methods=["GET", "POST"])
 @admin_required
 def edit_targets():
-    error = None; saved = False
-
     if request.method == "POST":
         action = (request.form.get("action") or "save").strip()
+        if action == "add_village":     return _admin_add_village()
+        if action == "delete_village":  return _admin_delete_village()
+        if action == "restore_village": return _admin_restore_village()
 
-        # ---- v39: dedicated add / delete / restore actions ----
-        if action == "add_village":
-            return _admin_add_village()
-        if action == "delete_village":
-            return _admin_delete_village()
-        if action == "restore_village":
-            return _admin_restore_village()
-
-        # ---- normal "save all" action ----
-        new_targets = {}
+        # Save all target + pendency edits
+        new_targets  = {}
         new_pendency = {}
-        new_tehsil_overrides = {}
-        new_unbucketed = {}
-        # Row edits: target::<norm_key>, pendency::<norm_key>, tehsil::<norm_key>
         for key, val in request.form.items():
             if key.startswith("target::"):
                 vk = key[len("target::"):]
-                try: n = int(val or 0)
-                except ValueError: n = 0
-                if n < 0: n = 0
+                try: n = max(0, int(val or 0))
+                except: n = 0
                 new_targets[vk] = n
             elif key.startswith("pendency::"):
                 vk = key[len("pendency::"):]
-                try: n = int(val or 0)
-                except ValueError: n = 0
-                if n < 0: n = 0
+                try: n = max(0, int(val or 0))
+                except: n = 0
                 new_pendency[vk] = n
-        for key, val in request.form.items():
-            if key.startswith("tehsil::"):
-                vk = key[len("tehsil::"):]
-                t = (val or "").strip()
-                # v37.2 — store EVERY explicit tehsil pick, regardless of whether
-                # it matches master. Because CSV tehsil now auto-wins over master,
-                # the admin's pick must always stick to prevent CSV from clobbering it.
-                if t and t in KUPWARA_TEHSILS:
-                    new_tehsil_overrides[vk] = t
-        for key, val in request.form.items():
-            if key.startswith("unbucketed::") and val == "yes":
-                vk = key[len("unbucketed::"):]
-                new_unbucketed[vk] = True
-
-        # Unknown-village new rows: unk_tehsil::<norm_key>, unk_target::<norm_key>, unk_pendency::<norm_key>
-        for key, val in request.form.items():
-            if key.startswith("unk_target::"):
-                vk = key[len("unk_target::"):]
-                t = (request.form.get("unk_tehsil::" + vk) or "").strip()
-                try: n = int(val or 0)
-                except ValueError: n = 0
-                if n < 0: n = 0
-                pend_raw = request.form.get("unk_pendency::" + vk, "")
-                try: np_ = int(pend_raw or 0)
-                except ValueError: np_ = 0
-                if np_ < 0: np_ = 0
-                if n > 0:
-                    new_targets[vk] = n
-                if np_ > 0:
-                    new_pendency[vk] = np_
-                if t and t in KUPWARA_TEHSILS:
-                    new_tehsil_overrides[vk] = t
-
-        _write_json(TARGETS_OVERRIDE_FILE, new_targets)
+        _write_json(TARGETS_OVERRIDE_FILE,  new_targets)
         _write_json(PENDENCY_OVERRIDE_FILE, new_pendency)
-        _write_json(VILLAGE_TEHSIL_OVERRIDE_FILE, new_tehsil_overrides)
-        _write_json(UNBUCKETED_FILE, new_unbucketed)
-
         if os.environ.get("GH_TOKEN") and os.environ.get("GH_REPO"):
             try:
-                commit_to_github(TARGETS_OVERRIDE_FILE, "data/targets.json",
+                commit_to_github(TARGETS_OVERRIDE_FILE,  "data/targets.json",
                                  "admin: update village targets")
                 commit_to_github(PENDENCY_OVERRIDE_FILE, "data/pendency.json",
                                  "admin: update village pendency")
-                commit_to_github(VILLAGE_TEHSIL_OVERRIDE_FILE, "data/village_tehsil_overrides.json",
-                                 "admin: update village tehsil assignments")
-                commit_to_github(UNBUCKETED_FILE, "data/unbucketed.json",
-                                 "admin: update unbucketed flags")
-                saved = True
             except Exception as e:
-                error = "Saved locally but GitHub push failed: {}".format(e)
-        else:
-            saved = True
+                flash("Saved locally but GitHub failed: {}".format(e), "err")
         _invalidate_dashboard_cache()
+        flash("Targets + pendency saved.", "ok")
+        return redirect(url_for("edit_targets"))
 
-    # Build display state
-    overrides         = load_targets_overrides()
-    tehsil_overrides  = load_village_tehsil_overrides()
-    unbucketed_flags  = load_unbucketed_flags()
-
-    # v37.2 — snapshot the most-recent CSV-reported tehsil for each village.
-    # CSV tehsil wins over master tehsil unless admin set a manual override.
-    csv_tehsil_by_key = {}
-    for _, path in list_month_baseline_files() + discover_snapshots():
-        try:
-            snap = parse_snapshot_csv(path)
-        except Exception:
-            continue
-        for k, v in snap.items():
-            t = canonical_tehsil(v["tehsil"])
-            if t in KUPWARA_TEHSILS:
-                csv_tehsil_by_key[k] = t
-
-    pendency_overrides = load_pendency_overrides()
-    deleted_villages   = load_deleted_villages()
-    added_villages     = load_added_villages()
-
-    # Collect the display rows. Deleted master villages go to a "recycle bin"
-    # at the bottom (with a Restore button). Admin-added villages join the
-    # main tehsil-wise table alongside master villages.
+    # ---- Build display state ----
+    deleted = load_deleted_villages()
     rows_by_tehsil = {t: [] for t in KUPWARA_TEHSILS}
     deleted_rows = []
-    seen_keys = set()
 
-    for t, v, tg, pd in DEFAULT_TARGETS:
+    for k, tehsil, vname, tg, pd, source in effective_master():
+        row = {"key": k, "village": vname, "tehsil": tehsil,
+               "target": tg, "pendency": pd, "source": source,
+               "unbucketed": (tg or 0) <= 0}
+        rows_by_tehsil.setdefault(tehsil, []).append(row)
+
+    # Collect deleted rows for the recycle bin (from master + added)
+    added = load_added_villages()
+    for t, v, tg_d, pd_d in DEFAULT_TARGETS:
         k = norm_key(t, v)
-        seen_keys.add(k)
-        cur_target = overrides.get(k, tg)
-        try: cur_target = int(cur_target)
-        except: cur_target = tg
-        cur_pend = pendency_overrides.get(k, pd)
-        try: cur_pend = int(cur_pend)
-        except: cur_pend = pd
-        master_t = canonical_tehsil(t)
-        eff_tehsil = tehsil_overrides.get(k,
-                        csv_tehsil_by_key.get(k, master_t))
-        row = {
-            "key": k, "village": v,
-            "master_tehsil": canonical_tehsil(t),
-            "effective_tehsil": eff_tehsil,
-            "default_target": tg, "current_target": cur_target,
-            "default_pendency": pd, "current_pendency": cur_pend,
-            "target_overridden": cur_target != tg,
-            "pendency_overridden": cur_pend != pd,
-            "unbucketed_flag": unbucketed_flags.get(k, False),
-            "unbucketed": unbucketed_flags.get(k, False) or (cur_target or 0) <= 0,
-            "from_master": True,
-        }
-        if k in deleted_villages:
-            deleted_rows.append(row)
-        else:
-            rows_by_tehsil.setdefault(eff_tehsil, []).append(row)
-
-    # Admin-added villages — join the main table.
-    for k, info in added_villages.items():
-        if k in seen_keys: continue
-        seen_keys.add(k)
-        v = info.get("village", "")
-        t_raw = info.get("tehsil", "")
-        tg_default = int(info.get("target", 0) or 0)
-        pd_default = int(info.get("pendency", 0) or 0)
-        cur_target = overrides.get(k, tg_default)
-        try: cur_target = int(cur_target)
-        except: cur_target = tg_default
-        cur_pend = pendency_overrides.get(k, pd_default)
-        try: cur_pend = int(cur_pend)
-        except: cur_pend = pd_default
-        master_t_guess = canonical_tehsil(t_raw) if t_raw else ""
-        eff_tehsil = tehsil_overrides.get(k,
-                        csv_tehsil_by_key.get(k, master_t_guess))
-        row = {
-            "key": k, "village": v,
-            "master_tehsil": None, "effective_tehsil": eff_tehsil,
-            "default_target": tg_default, "current_target": cur_target,
-            "default_pendency": pd_default, "current_pendency": cur_pend,
-            "target_overridden": cur_target != tg_default,
-            "pendency_overridden": cur_pend != pd_default,
-            "unbucketed_flag": unbucketed_flags.get(k, False),
-            "unbucketed": unbucketed_flags.get(k, False) or (cur_target or 0) <= 0,
-            "from_master": False,
-            "admin_added": True,
-        }
-        if k in deleted_villages:
-            deleted_rows.append(row)
-        else:
-            rows_by_tehsil.setdefault(eff_tehsil, []).append(row)
-
-    # Loose override-only keys (legacy — in overrides but neither master nor added)
-    for k, cur in overrides.items():
-        if k in seen_keys: continue
-        if k in deleted_villages: continue
-        parts = k.split("||", 1)
-        t_raw = parts[0] if len(parts) == 2 else ""
-        v = parts[1].title() if len(parts) == 2 else k.lstrip("|").title()
-        try: cur = int(cur)
-        except: cur = 0
-        cur_pend = pendency_overrides.get(k, 0)
-        try: cur_pend = int(cur_pend)
-        except: cur_pend = 0
-        master_t_guess = canonical_tehsil(t_raw) if t_raw else ""
-        eff_tehsil = tehsil_overrides.get(k,
-                        csv_tehsil_by_key.get(k, master_t_guess))
-        rows_by_tehsil.setdefault(eff_tehsil, []).append({
-            "key": k, "village": v,
-            "master_tehsil": None, "effective_tehsil": eff_tehsil,
-            "default_target": None, "current_target": cur,
-            "default_pendency": None, "current_pendency": cur_pend,
-            "target_overridden": True, "pendency_overridden": True,
-            "unbucketed_flag": unbucketed_flags.get(k, False),
-            "unbucketed": unbucketed_flags.get(k, False) or cur <= 0,
-            "from_master": False,
-        })
-        seen_keys.add(k)
+        if k in deleted:
+            targets_o = load_targets_overrides(); pendency_o = load_pendency_overrides()
+            tg = int(targets_o.get(k, tg_d) or 0); pd = int(pendency_o.get(k, pd_d) or 0)
+            deleted_rows.append({"key": k, "village": v, "tehsil": canonical_tehsil(t),
+                                 "target": tg, "pendency": pd, "source": "csv"})
+    for k, info in added.items():
+        if k in deleted:
+            deleted_rows.append({"key": k, "village": info.get("village", ""),
+                                 "tehsil": info.get("tehsil", ""),
+                                 "target": int(info.get("target", 0) or 0),
+                                 "pendency": int(info.get("pendency", 0) or 0),
+                                 "source": "added"})
 
     for t in rows_by_tehsil:
         rows_by_tehsil[t].sort(key=lambda r: r["village"].upper())
@@ -1258,12 +975,10 @@ def edit_targets():
         if not rows and t not in KUPWARA_TEHSILS: continue
         bucketed = sum(1 for r in rows if not r["unbucketed"])
         unbucketed = len(rows) - bucketed
-        tehsil_rows.append({
-            "tehsil": t, "rows": rows,
-            "count": len(rows), "bucketed": bucketed, "unbucketed": unbucketed,
-            "target_sum":  sum(r["current_target"]  for r in rows if not r["unbucketed"]),
-            "pendency_sum": sum(r["current_pendency"] for r in rows if not r["unbucketed"]),
-        })
+        tehsil_rows.append({"tehsil": t, "rows": rows,
+                            "count": len(rows), "bucketed": bucketed, "unbucketed": unbucketed,
+                            "target_sum":   sum(r["target"]   for r in rows),
+                            "pendency_sum": sum(r["pendency"] for r in rows)})
 
     total_rows   = sum(len(tr["rows"]) for tr in tehsil_rows)
     total_bkt    = sum(tr["bucketed"] for tr in tehsil_rows)
@@ -1271,118 +986,25 @@ def edit_targets():
     total_target = sum(tr["target_sum"] for tr in tehsil_rows)
     total_pendency = sum(tr["pendency_sum"] for tr in tehsil_rows)
 
-    unknowns = []
-    for k, info in villages_seen_in_uploads().items():
-        if k in seen_keys: continue
-        unknowns.append({"key": k, "tehsil_seen": info["tehsil"], "village": info["village"]})
-    unknowns.sort(key=lambda r: (r["tehsil_seen"], r["village"]))
-
     return render_template("edit_targets.html",
-                           tehsil_rows=tehsil_rows,
-                           tehsils=KUPWARA_TEHSILS,
+                           tehsil_rows=tehsil_rows, tehsils=KUPWARA_TEHSILS,
                            total_rows=total_rows, total_bucketed=total_bkt,
                            total_unbucketed=total_unbkt, total_target=total_target,
                            total_pendency=total_pendency,
-                           unknowns=unknowns,
-                           deleted_rows=deleted_rows,
-                           error=error, saved=saved)
-
-# =========================================================================
-# CSV village reconciliation (spelling drift)
-# =========================================================================
-
-@app.route("/admin/csv-reconciliation", methods=["GET", "POST"])
-@admin_required
-def csv_reconciliation():
-    error = None; saved = False
-
-    if request.method == "POST":
-        # Build new alias map by overlaying existing + form choices
-        new_aliases = dict(_load_csv_village_aliases())
-        for key, val in request.form.items():
-            if not key.startswith("map::"): continue
-            csv_norm = key[len("map::"):]
-            target = (val or "").strip()
-            if target:
-                new_aliases[csv_norm] = target
-            elif csv_norm in new_aliases:
-                # Blank selection -> clear mapping
-                del new_aliases[csv_norm]
-        _write_json(CSV_ALIAS_FILE, new_aliases)
-        _invalidate_csv_alias_cache()
-        if os.environ.get("GH_TOKEN") and os.environ.get("GH_REPO"):
-            try:
-                commit_to_github(CSV_ALIAS_FILE, "data/csv_village_aliases.json",
-                                 "admin: update CSV village aliases")
-                saved = True
-            except Exception as e:
-                error = "Saved locally but GitHub push failed: {}".format(e)
-        else:
-            saved = True
-        _invalidate_dashboard_cache()
-
-    # Build list of CSV-seen village norms that don't match any master village
-    master_village_norms = set()
-    master_villages_by_norm = {}
-    for t, v, _tg, _pd in DEFAULT_TARGETS:
-        n = norm_name(v)
-        master_village_norms.add(n)
-        master_villages_by_norm[n] = (canonical_tehsil(t), v)
-    aliases = _load_csv_village_aliases()
-
-    seen = {}  # norm -> {display_raw, canonical_tehsil}
-    for _, path in list_month_baseline_files() + discover_snapshots():
-        try:
-            with open(path, "r", encoding="utf-8", newline="") as f:
-                reader = csv.reader(f); header = next(reader, None)
-                if not header: continue
-                t_idx = find_header_idx(header, TEHSIL_HEADERS)
-                v_idx = find_header_idx(header, VILLAGE_HEADERS)
-                if t_idx < 0 or v_idx < 0: continue
-                for row in reader:
-                    if not row or len(row) <= max(t_idx, v_idx): continue
-                    raw_t = (row[t_idx] or "").strip()
-                    raw_v = (row[v_idx] or "").strip()
-                    if not raw_v: continue
-                    n = norm_name(raw_v)
-                    if n not in seen:
-                        seen[n] = {"raw_village": raw_v, "raw_tehsil": raw_t}
-        except Exception:
-            continue
-
-    unmapped = []
-    mapped = []
-    for n, info in sorted(seen.items()):
-        mapped_to = aliases.get(n)
-        if mapped_to:
-            mapped.append({"csv_norm": n, "raw_village": info["raw_village"],
-                           "raw_tehsil": info["raw_tehsil"], "mapped_to": mapped_to})
-        elif n not in master_village_norms:
-            unmapped.append({"csv_norm": n, "raw_village": info["raw_village"],
-                             "raw_tehsil": info["raw_tehsil"]})
-
-    # Candidate master villages for the dropdown
-    candidates = sorted(master_villages_by_norm.keys())
-
-    return render_template("csv_reconciliation.html",
-                           unmapped=unmapped, mapped=mapped,
-                           candidates=candidates,
-                           master_villages_by_norm=master_villages_by_norm,
-                           error=error, saved=saved)
+                           deleted_rows=deleted_rows)
 
 # =========================================================================
 # Downloads
 # =========================================================================
 
-def _pct(num, den):
-    return round((num / den * 100), 1) if den > 0 else 0.0
+def _pct(num, den): return round((num / den * 100), 1) if den > 0 else 0.0
 
 @app.route("/download/csv")
+@admin_required
 def download_csv():
     import io
     state = build_nested_structure()
-    buf = io.StringIO()
-    w = csv.writer(buf)
+    buf = io.StringIO(); w = csv.writer(buf)
     w.writerow(["Tehsil", "Village", "Target", "Pendency", "Total Issued",
                 "Additions this month", "Issue %", "Approved", "Approval %"])
     for t in state["tehsils"]:
@@ -1396,6 +1018,7 @@ def download_csv():
                     headers={"Content-Disposition": f"attachment; filename=kupwara_farmer_id_{today}.csv"})
 
 @app.route("/download/xlsx")
+@admin_required
 def download_xlsx():
     import io
     from openpyxl import Workbook
@@ -1404,14 +1027,12 @@ def download_xlsx():
     state = build_nested_structure()
     wb = Workbook()
     header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill("solid", fgColor="1A3A5C")
+    header_fill = PatternFill("solid", fgColor="0B4D2B")
     totals_font = Font(bold=True)
-    totals_fill = PatternFill("solid", fgColor="EEF2F7")
-
+    totals_fill = PatternFill("solid", fgColor="EEF4ED")
     def write_sheet(ws, headers, rows, totals_row=None):
         for i, h in enumerate(headers, 1):
-            c = ws.cell(row=1, column=i, value=h)
-            c.font = header_font; c.fill = header_fill
+            c = ws.cell(row=1, column=i, value=h); c.font = header_font; c.fill = header_fill
             c.alignment = Alignment(horizontal="left", vertical="center")
         for r_idx, row in enumerate(rows, 2):
             for c_idx, val in enumerate(row, 1):
@@ -1426,31 +1047,27 @@ def download_xlsx():
             ws.column_dimensions[get_column_letter(c_idx)].width = min(max_len + 2, 42)
         ws.freeze_panes = "A2"
 
-    # Sheet 1: Tehsil Summary
     ws = wb.active; ws.title = "Tehsil Summary"
     headers = ["#", "Tehsil", "Villages", "Target", "Pendency", "Total Issued",
                "Additions this month", "Issue %", "Approved", "Approval %"]
     rows = []; gT=gP=gI=gA=gAdd=0
     for i, t in enumerate(sorted(state["tehsils"], key=lambda t: -t["issued"]), 1):
-        additions = t["issued"] - t["issuedBaseline"]
-        tp = t.get("pendency", 0)
+        adds = t["issued"] - t["issuedBaseline"]; tp = t.get("pendency", 0)
         rows.append([i, t["tehsil"], len(t["villages"]), t["target"], tp, t["issued"],
-                     additions, _pct(t["issued"], t["target"]),
-                     t["approved"], _pct(t["approved"], t["issued"])])
-        gT += t["target"]; gP += tp; gI += t["issued"]; gA += t["approved"]; gAdd += additions
+                     adds, _pct(t["issued"], t["target"]), t["approved"], _pct(t["approved"], t["issued"])])
+        gT += t["target"]; gP += tp; gI += t["issued"]; gA += t["approved"]; gAdd += adds
     totals = ["", "TOTAL", "", gT, gP, gI, gAdd, _pct(gI, gT), gA, _pct(gA, gI)]
     write_sheet(ws, headers, rows, totals)
 
-    # Sheet 2: Village Details
     ws = wb.create_sheet("Village Details")
     headers = ["#", "Tehsil", "Village", "Target", "Pendency", "Total Issued",
                "Additions this month", "Issue %", "Approved", "Approval %"]
     rows = []; n = 1
     for t in state["tehsils"]:
         for v in t["villages"]:
-            additions = v["issued"] - v["issuedBaseline"]
+            adds = v["issued"] - v["issuedBaseline"]
             rows.append([n, t["tehsil"], v["village"], v["target"], v.get("pendency", 0),
-                         v["issued"], additions, _pct(v["issued"], v["target"]),
+                         v["issued"], adds, _pct(v["issued"], v["target"]),
                          v["approved"], _pct(v["approved"], v["issued"])])
             n += 1
     write_sheet(ws, headers, rows)
@@ -1482,10 +1099,7 @@ def analysis():
     with_target = [v for v in villages if v["target"] > 0]
     top10 = sorted(with_target, key=lambda v: -v["issuePct"])[:10]
     bottom10 = sorted(with_target, key=lambda v: v["issuePct"])[:10]
-    no_progress = [v for v in with_target if v["additions"] == 0]
-    overachievers = [v for v in villages if v["issuePct"] >= 100]
     at_risk = sorted([v for v in with_target if v["issuePct"] < 30], key=lambda v: v["issuePct"])
-
     tehsil_ranking = []
     for t in state["tehsils"]:
         tehsil_ranking.append({
@@ -1496,40 +1110,31 @@ def analysis():
             "approvalPct": _pct(t["approved"], t["issued"]),
         })
     tehsil_ranking.sort(key=lambda r: -r["issuePct"])
-
-    tot_tgt = sum(v["target"] for v in villages)
-    tot_iss = sum(v["issued"] for v in villages)
-    tot_app = sum(v["approved"] for v in villages)
-    tot_add = sum(v["additions"] for v in villages)
-
     data = {
-        "summary": {
-            "count": len(villages),
-            "target": tot_tgt, "issued": tot_iss, "approved": tot_app, "additions": tot_add,
-            "issuePct": _pct(tot_iss, tot_tgt), "approvalPct": _pct(tot_app, tot_iss),
-        },
-        "top10": top10, "bottom10": bottom10,
-        "no_progress": no_progress, "overachievers": overachievers, "at_risk": at_risk,
+        "summary": {"count": len(villages),
+                    "target": sum(v["target"] for v in villages),
+                    "issued": sum(v["issued"] for v in villages),
+                    "approved": sum(v["approved"] for v in villages),
+                    "additions": sum(v["additions"] for v in villages),
+                    "issuePct": _pct(sum(v["issued"] for v in villages), sum(v["target"] for v in villages)),
+                    "approvalPct": _pct(sum(v["approved"] for v in villages), sum(v["issued"] for v in villages))},
+        "top10": top10, "bottom10": bottom10, "at_risk": at_risk,
         "tehsil_ranking": tehsil_ranking,
-        "state_meta": {
-            "baselineDate": state["baselineDate"], "baselineLabel": state["baselineLabel"],
-            "snapshotDates": state["snapshotDates"], "generated": state["generated"],
-        },
+        "state_meta": {"baselineDate": state["baselineDate"], "baselineLabel": state["baselineLabel"],
+                       "snapshotDates": state["snapshotDates"], "generated": state["generated"]},
     }
     return render_template("analysis.html", data=data)
 
 # =========================================================================
-# GitHub commit (deduped by content SHA)
+# GitHub commit
 # =========================================================================
 
 def commit_to_github(local_path, repo_path, message):
     import base64, hashlib, urllib.request, urllib.error
-    token = os.environ["GH_TOKEN"]
-    repo = os.environ["GH_REPO"]
+    token = os.environ["GH_TOKEN"]; repo = os.environ["GH_REPO"]
     branch = os.environ.get("GH_BRANCH", "main")
     url = "https://api.github.com/repos/{}/contents/{}".format(repo, repo_path)
-    with open(local_path, "rb") as f:
-        local_bytes = f.read()
+    with open(local_path, "rb") as f: local_bytes = f.read()
     content_b64 = base64.b64encode(local_bytes).decode("ascii")
     sha = None
     try:
@@ -1539,8 +1144,7 @@ def commit_to_github(local_path, repo_path, message):
         resp = urllib.request.urlopen(req, timeout=15)
         sha = json.loads(resp.read())["sha"]
         header = ("blob %d\0" % len(local_bytes)).encode("latin-1")
-        if hashlib.sha1(header + local_bytes).hexdigest() == sha:
-            return
+        if hashlib.sha1(header + local_bytes).hexdigest() == sha: return
     except urllib.error.HTTPError as e:
         if e.code != 404: raise
     body = {"message": message, "content": content_b64, "branch": branch}

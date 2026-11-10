@@ -6,7 +6,7 @@
   <title>Targets — {{ portal_short }}</title>
   <style>
     body { background:#f3f6fb; color:#1f2937; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; margin:0; padding:0; }
-    .wrap { max-width:1300px; margin:24px auto; padding:0 16px; }
+    .wrap { max-width:1200px; margin:24px auto; padding:0 16px; }
     .card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:20px 24px; box-shadow:0 1px 3px rgba(0,0,0,.04); margin-bottom:18px; }
     .card h2, .card h3 { color:#0b4d2b; margin:0 0 10px 0; }
     .mut { color:#4b5563; }
@@ -15,7 +15,6 @@
     .nav a:hover { text-decoration:underline; }
     .ok { margin:12px 0; padding:10px 12px; border:1px solid #c3e6cb; background:#d4edda; color:#155724; border-radius:6px; }
     .err { margin:12px 0; padding:10px 12px; border:1px solid #f5c6cb; background:#f8d7da; color:#721c24; border-radius:6px; }
-    .warn-banner { margin:12px 0; padding:10px 14px; border:1px solid #f0c674; background:#fff8e8; color:#7a5b14; border-radius:6px; font-size:14px; }
     details { border:1px solid #e5e7eb; border-radius:8px; margin-bottom:12px; background:#fff; }
     details > summary { padding:12px 16px; cursor:pointer; font-weight:600; color:#0b4d2b; background:#f8fbf9; border-radius:8px; list-style:none; outline:none; }
     details[open] > summary { border-bottom:1px solid #e5e7eb; border-radius:8px 8px 0 0; }
@@ -33,18 +32,16 @@
     .tag { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
     .tag.bkt { background:#dcfce7; color:#166534; }
     .tag.unbkt { background:#fef3c7; color:#92400e; }
-    .tag.ovr { background:#e0e7ff; color:#3730a3; font-weight:500; }
-    .tag.unk { background:#fee2e2; color:#991b1b; font-weight:500; }
+    .tag.added { background:#dbeafe; color:#1e40af; }
     input[type=number] { width:90px; padding:4px 6px; border:1px solid #d1d5db; border-radius:5px; font-variant-numeric:tabular-nums; text-align:right; }
     select.tehsel { padding:4px 6px; border:1px solid #d1d5db; border-radius:5px; font-size:12px; max-width:180px; }
     .save-bar { position:sticky; bottom:0; background:#fff; border-top:1px solid #e5e7eb; padding:14px 20px; display:flex; justify-content:space-between; align-items:center; box-shadow:0 -2px 6px rgba(0,0,0,.05); }
     .btn { background:#0b4d2b; color:#fff; padding:10px 20px; border:none; border-radius:6px; font-weight:600; font-size:14px; cursor:pointer; }
     .btn:hover { background:#166534; }
     .btn.danger { background:#b91c1c; } .btn.danger:hover { background:#991b1b; }
-    .btn.warn { background:#a16207; } .btn.warn:hover { background:#854d0e; }
+    .btn.warn   { background:#a16207; } .btn.warn:hover { background:#854d0e; }
     .totals { background:#eef4ed; padding:10px 14px; border-radius:8px; font-size:14px; }
     .totals strong { color:#0b4d2b; }
-    .warn-row td { background:#fef2f2 !important; }
   </style>
 </head>
 <body>
@@ -54,14 +51,11 @@
   <a href="/upload">Upload daily</a>
   <a href="/admin/month-baselines">Monthly Baselines</a>
   <a href="/admin/targets">Targets</a>
-  <a href="/admin/csv-reconciliation">CSV Reconciliation</a>
   <a href="/admin">Admin</a>
 </div>
 
 <div class="wrap">
 
-{% if saved %}<div class="ok">Saved targets, tehsil assignments and unbucketed flags.</div>{% endif %}
-{% if error %}<div class="err">{{ error }}</div>{% endif %}
 {% with messages = get_flashed_messages(with_categories=true) %}
   {% for category, msg in messages %}
     <div class="{{ 'ok' if category == 'ok' else 'err' }}">{{ msg }}</div>
@@ -71,9 +65,9 @@
 <div class="card" style="border-color:#86efac;background:#f6fdf7;">
   <h3 style="color:#15803d;">Add a new village</h3>
   <p class="mut">
-    Use this to introduce a village with a specific spelling (usually the
-    AGRISTACK CSV spelling) so CSV rows attach cleanly. Leave target / pendency
-    at 0 to add it unbucketed.
+    Use this to add a village that is bucketed but has not shown up in any CSV yet. Pick the tehsil,
+    type the village name, set target + pendency. For villages that are in the CSV but need a target
+    set, use the inline inputs in the tehsil tables below.
   </p>
   <form method="POST" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
     <input type="hidden" name="action" value="add_village">
@@ -81,15 +75,12 @@
       <label style="font-size:11px; color:#64748b; display:block; margin-bottom:4px;">TEHSIL</label>
       <select name="new_tehsil" required class="tehsel" style="min-width:160px;">
         <option value="">— pick —</option>
-        {% for t in tehsils %}
-          <option value="{{ t }}">{{ t }}</option>
-        {% endfor %}
+        {% for t in tehsils %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
       </select>
     </div>
     <div>
       <label style="font-size:11px; color:#64748b; display:block; margin-bottom:4px;">VILLAGE NAME</label>
       <input type="text" name="new_village" required
-             placeholder="Exact CSV spelling"
              style="padding:6px 8px; border:1px solid #d1d5db; border-radius:5px; min-width:200px; font-size:13px;">
     </div>
     <div>
@@ -107,17 +98,16 @@
 <div class="card">
   <h2>Village Targets</h2>
   <div class="totals">
-    <strong>{{ total_rows }}</strong> villages in all ·
+    <strong>{{ total_rows }}</strong> villages ·
     <span class="bucketed-count">{{ total_bucketed }} bucketed</span> ·
     <span class="unbucketed-count">{{ total_unbucketed }} unbucketed</span> ·
     <strong>{{ "{:,}".format(total_target) }}</strong> total target ·
     <strong style="color:#92400e">{{ "{:,}".format(total_pendency) }}</strong> total pendency
   </div>
   <p class="mut" style="margin-top:10px;">
-    Set target = 0 (or blank) to <strong>unbucket</strong> a village — it disappears from the dashboard
-    unless CSV data exists for it (farmer IDs always count). Use the tehsil dropdown on each row to
-    re-assign a village to the correct tehsil. Pendency = bucket count still pending to be claimed
-    (per the bucket report); editable here.
+    Every village in the tables below appears on the dashboard, regardless of target. Set targets +
+    pendency here. Use <strong>Delete</strong> for one-off cleanup (deleted villages are restorable
+    from the Deleted section at the bottom).
   </p>
 </div>
 
@@ -138,7 +128,6 @@
     <table class="t">
       <thead><tr>
         <th>Village</th>
-        <th>Effective Tehsil (dropdown lets you correct)</th>
         <th class="num" style="text-align:right">Target</th>
         <th class="num" style="text-align:right;background:#fdf4ec;color:#92400e">Pendency</th>
         <th style="text-align:center">Status</th>
@@ -149,33 +138,19 @@
           <tr class="{% if r.unbucketed %}unbucketed{% else %}bucketed{% endif %}">
             <td>
               <strong>{{ r.village }}</strong>
-              {% if r.admin_added %}
-                <span class="tag" style="background:#dcfce7;color:#166534;">admin-added</span>
-              {% elif not r.from_master %}
-                <span class="tag unk" title="This village was added from outside the master list">non-master</span>
-              {% elif r.master_tehsil != r.effective_tehsil %}
-                <span class="tag ovr" title="Original master tehsil: {{ r.master_tehsil }}">tehsil overridden</span>
+              {% if r.source == 'added' %}
+                <span class="tag added" title="Admin-added, not from a CSV">admin-added</span>
               {% endif %}
-            </td>
-            <td>
-              <select name="tehsil::{{ r.key }}" class="tehsel">
-                {% for t in tehsils %}
-                  <option value="{{ t }}" {% if t == r.effective_tehsil %}selected{% endif %}>{{ t }}</option>
-                {% endfor %}
-              </select>
             </td>
             <td style="text-align:right">
-              <input type="number" name="target::{{ r.key }}" value="{{ r.current_target }}" min="0" step="1">
+              <input type="number" name="target::{{ r.key }}" value="{{ r.target }}" min="0" step="1">
             </td>
             <td style="text-align:right;background:#fdf4ec">
-              <input type="number" name="pendency::{{ r.key }}" value="{{ r.current_pendency }}" min="0" step="1">
+              <input type="number" name="pendency::{{ r.key }}" value="{{ r.pendency }}" min="0" step="1">
             </td>
             <td style="text-align:center">
-              {% if r.unbucketed %}
-                <span class="tag unbkt">Unbucketed</span>
-              {% else %}
-                <span class="tag bkt">Bucketed</span>
-              {% endif %}
+              {% if r.unbucketed %}<span class="tag unbkt">Unbucketed</span>
+              {% else %}<span class="tag bkt">Bucketed</span>{% endif %}
             </td>
             <td style="text-align:center">
               <button type="button" class="btn danger"
@@ -189,52 +164,8 @@
   </details>
 {% endfor %}
 
-{% if unknowns %}
-<div class="card" style="border-color:#f0c674;background:#fffbf0;">
-  <h3 style="color:#a86416;">CSV-unknown villages — from AGRISTACK uploads, not in master list</h3>
-  <p class="mut">
-    These village names appeared in an uploaded CSV but don't match any master village. Pick the correct
-    tehsil from the dropdown and enter a target to bring them into the dashboard. Leave target blank/0
-    to keep them hidden.
-  </p>
-  <table class="t">
-    <thead><tr>
-      <th>Village (as in CSV)</th>
-      <th>Tehsil (as in CSV)</th>
-      <th>Assign to tehsil</th>
-      <th style="text-align:right">Target</th>
-      <th style="text-align:right;background:#fdf4ec;color:#92400e">Pendency</th>
-    </tr></thead>
-    <tbody>
-      {% for u in unknowns %}
-        <tr class="warn-row">
-          <td><strong>{{ u.village }}</strong> <span class="tag unk">from CSV — not in master list</span></td>
-          <td style="color:#64748b">{{ u.tehsil_seen or '—' }}</td>
-          <td>
-            <select name="unk_tehsil::{{ u.key }}" class="tehsel">
-              <option value="">— pick —</option>
-              {% for t in tehsils %}
-                <option value="{{ t }}">{{ t }}</option>
-              {% endfor %}
-            </select>
-          </td>
-          <td style="text-align:right">
-            <input type="number" name="unk_target::{{ u.key }}" value="0" min="0" step="1">
-          </td>
-          <td style="text-align:right;background:#fdf4ec">
-            <input type="number" name="unk_pendency::{{ u.key }}" value="0" min="0" step="1">
-          </td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% endif %}
-
 <div class="save-bar">
-  <div class="mut">
-    All changes are committed to GitHub on save. Takes ~2 min for Render to redeploy.
-  </div>
+  <div class="mut">Changes commit to GitHub on save; Render takes ~2 min to redeploy.</div>
   <button type="submit" class="btn">Save all changes</button>
 </div>
 
@@ -243,11 +174,11 @@
 {% if deleted_rows %}
 <div class="card" style="border-color:#fecaca;background:#fef2f2;">
   <h3 style="color:#991b1b;">Deleted villages
-    <span style="font-weight:400;color:#64748b;font-size:14px;">({{ deleted_rows|length }}) — hidden from the dashboard. Restore to bring back.</span>
+    <span style="font-weight:400;color:#64748b;font-size:14px;">({{ deleted_rows|length }}) — hidden from dashboard.</span>
   </h3>
   <table class="t">
     <thead><tr>
-      <th>Village</th><th>Original Tehsil</th>
+      <th>Village</th><th>Tehsil</th>
       <th class="num" style="text-align:right">Target</th>
       <th class="num" style="text-align:right;background:#fdf4ec;color:#92400e">Pendency</th>
       <th style="text-align:center">Restore</th>
@@ -256,12 +187,11 @@
       {% for r in deleted_rows %}
         <tr>
           <td><strong>{{ r.village }}</strong>
-            {% if r.admin_added %}<span class="tag" style="background:#dcfce7;color:#166534;">admin-added</span>
-            {% elif r.from_master %}<span class="tag" style="background:#e2e8f0;color:#334155;">from master</span>{% endif %}
+            {% if r.source == 'added' %}<span class="tag added">admin-added</span>{% endif %}
           </td>
-          <td>{{ r.effective_tehsil or r.master_tehsil or '—' }}</td>
-          <td style="text-align:right">{{ r.current_target }}</td>
-          <td style="text-align:right">{{ r.current_pendency }}</td>
+          <td>{{ r.tehsil or '—' }}</td>
+          <td style="text-align:right">{{ r.target }}</td>
+          <td style="text-align:right">{{ r.pendency }}</td>
           <td style="text-align:center">
             <form method="POST" style="display:inline;">
               <input type="hidden" name="action" value="restore_village">
@@ -276,7 +206,6 @@
 </div>
 {% endif %}
 
-<!-- Standalone delete form, submitted by _del() JS from any row's Delete button -->
 <form method="POST" id="deleteForm" style="display:none;">
   <input type="hidden" name="action" value="delete_village">
   <input type="hidden" name="delete_key" id="deleteKey">
@@ -284,7 +213,7 @@
 
 <script>
 function _del(key, name) {
-  if (!confirm('Delete village "' + name + '"? It will be hidden from the dashboard. You can restore it from the "Deleted villages" section at the bottom.')) return false;
+  if (!confirm('Delete village "' + name + '"? It will be hidden from the dashboard; you can restore it from the Deleted villages section.')) return false;
   document.getElementById('deleteKey').value = key;
   document.getElementById('deleteForm').submit();
   return false;
