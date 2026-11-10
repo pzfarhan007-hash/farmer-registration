@@ -11,6 +11,12 @@
     "tehsil": "Kralpora",
     "village": "Dard Hari Khar Gund"
   },
+  "KUPWARA||GUNDSANAHHAIHAMA": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Gundsanah Haihama"
+  },
   "KUPWARA||GUSHI": {
     "pendency": 0,
     "target": 0,
@@ -29,6 +35,12 @@
     "tehsil": "Kupwara",
     "village": "Push Wari"
   },
+  "KUPWARA||REGIPORA": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Regipora"
+  },
   "LANGATE||KOHRU": {
     "pendency": 0,
     "target": 0,
@@ -40,6 +52,12 @@
     "target": 0,
     "tehsil": "Qalamabad",
     "village": "Shat Gund Bala"
+  },
+  "QAZIABAD||DEEDARPORA": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Qaziabad",
+    "village": "Deedar Pora"
   },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
