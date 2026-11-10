@@ -5,6 +5,42 @@
     "tehsil": "Handwara",
     "village": "Jager Pora"
   },
+  "KRALPORA||DARDHARIKHARGUND": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kralpora",
+    "village": "Dard Hari Khar Gund"
+  },
+  "KUPWARA||GUSHI": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Gushi"
+  },
+  "KUPWARA||PAZIPORA": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Pazi Pora"
+  },
+  "KUPWARA||PUSHWARI": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Push Wari"
+  },
+  "LANGATE||KOHRU": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Langate",
+    "village": "Kohru"
+  },
+  "QALAMABAD||SHATGUNDBALA": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Qalamabad",
+    "village": "Shat Gund Bala"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
