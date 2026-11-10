@@ -1,86 +1,76 @@
-# Kupwara Farmer Enrollment Portal
+# Kupwara Farmer Enrollment Portal (v40)
 
 Sister portal to the Bandipora Farmer ID Progress dashboard, for Kupwara district (J&K).
 Flask + Gunicorn, deployed on Render, auto-committing admin writes to GitHub.
 
+## v40 model (simplified)
+
+* **Master list of villages** comes straight from the Aug + Sep + Oct 2026 AGRISTACK CSVs —
+  331 villages, 16 tehsils. Every CSV village appears on the dashboard regardless of its
+  target.
+* **Village name matching** is hard-norm (strip whitespace + punctuation), so "Lal Pora"
+  and "Lalpora" always collapse to the same row — no duplication.
+* **Monthly baselines** (`data/baselines/YYYY-MM.csv`) hold historical month totals.
+* **Daily uploads** go to `data/YYYY-MM-DD.csv`. If the CSV mentions a village that is
+  NOT in the master list, the upload is held in a pending state and the admin is asked
+  to tehsil + target + pendency for each new village before the upload finalises.
+
 ## Layout
 
 ```
-app.py                           Flask backend (all routes)
-default_targets.py               Kupwara master list — 15 tehsils, 334 villages
-Procfile                         Render process definition
-requirements.txt                 Python deps
-templates/                       Jinja2 templates (one per page)
+app.py                       Flask backend
+default_targets.py           Master list (16 tehsils, 331 villages — from CSVs)
+Procfile                     Gunicorn worker (1 worker, 120s timeout)
+requirements.txt             Python deps
+templates/                   Jinja2 pages
 data/
-  baselines/YYYY-MM.csv          One CSV per completed month (uploaded via admin)
-  YYYY-MM-DD.csv                 Daily snapshots within the current month
-  targets.json                   Admin target overrides
-  village_tehsil_overrides.json  Admin tehsil re-assignments
-  unbucketed.json                Admin explicit-hide flags
-  csv_village_aliases.json       CSV spelling → portal canonical mappings
+  targets.json               Admin-set targets per village (seeded: 300 villages, 227,086)
+  pendency.json              Admin-set pendency per village (seeded: 299 villages, 191,145)
+  added_villages.json        Admin-added villages (not in master CSVs)
+  deleted_villages.json      Admin-deleted village keys (recycle bin)
+  baselines/YYYY-MM.csv      One per completed month (upload via admin)
+  YYYY-MM-DD.csv             Daily snapshots within the current month
+  pending/YYYY-MM-DD.csv     In-flight uploads waiting for new-village confirmation
 ```
 
 ## Deploy to Render (first time)
 
-1. Create a new GitHub repo (e.g. `peerzadaobaid/Kupwara-Farmer-Portal`).
-2. Upload every file in this folder to the repo root (keep the `templates/` folder structure).
-3. On Render → New → Web Service → connect to that repo.
-   - Build command: `pip install -r requirements.txt`
-   - Start command: leave blank (Procfile handles it)
-   - Instance type: Free
-4. Set environment variables on the Render service:
-   - `ADMIN_USER` = `admin` (or whatever you prefer)
-   - `ADMIN_PASS` = your admin password
-   - `FLASK_SECRET_KEY` = any long random string (session cookies)
-   - `GH_TOKEN` = a GitHub PAT with `repo` scope
-   - `GH_REPO` = `peerzadaobaid/Kupwara-Farmer-Portal`
-   - `GH_BRANCH` = `main`
-5. Deploy. First deploy takes ~3-4 min.
-6. Open the Render URL. Log in via `/login`.
+1. **GitHub repo** — create (e.g. `peerzadaobaid/Kupwara-Farmer-Portal`) and upload every file
+   in this folder. Keep the `templates/` and `data/` sub-folders.
+2. **Render → New → Web Service** → connect to that repo.
+   * Build command: `pip install -r requirements.txt`
+   * Start command: leave blank (Procfile handles it)
+   * Instance type: Free
+3. **Environment variables** on the Render service:
+   * `ADMIN_USER` = `admin`
+   * `ADMIN_PASS` = your admin password
+   * `FLASK_SECRET_KEY` = any long random string
+   * `GH_TOKEN` = GitHub PAT with `repo` scope
+   * `GH_REPO` = `peerzadaobaid/Kupwara-Farmer-Portal`
+   * `GH_BRANCH` = `main`
+4. Deploy. First build ~3-4 min.
+5. Open the Render URL, log in, and start uploading baselines / daily snapshots.
 
-## How baselines and uploads work
+## Admin workflow
 
-- Historical months (Aug, Sep, Oct 2026) → upload each month-end CSV on the
-  **Monthly Baselines** admin page. Each file is month-only enrollments. The
-  dashboard baseline = sum of all uploaded months.
-- Current month (Nov 2026 onwards) → upload daily CSVs via the **Upload daily**
-  page. AGRISTACK CSVs are cumulative-within-month, so the latest daily snapshot
-  for any given month represents the month-to-date total.
-- At month-end → click **Close current month** on the Monthly Baselines page.
-  The latest daily snapshot is promoted into `data/baselines/YYYY-MM.csv`, and
-  daily uploads for the next month start fresh.
+| Page | What it does |
+|---|---|
+| `/` | Public dashboard (tehsil-wise + village drill-down) |
+| `/admin` | Admin index |
+| `/admin/month-baselines` | Upload one CSV per completed month; close the current month |
+| `/upload` | Daily CSV upload (within current month); new-village confirmation flow |
+| `/admin/targets` | Set target + pendency per village. Add / delete villages. |
+| `/analysis` | Top/bottom villages, at-risk list, tehsil ranking |
+| `/download/xlsx` | Admin-only Excel download |
 
-## Admin targets
+## New-village flow on daily upload
 
-- All 334 master-list villages are shown, grouped by tehsil (collapsible per tehsil).
-- Each row has:
-  - **Tehsil dropdown** — pick any of the 15 Kupwara tehsils to re-assign the village
-    if AGRISTACK filed it under the wrong tehsil. Original master assignment is
-    preserved; only the override is stored.
-  - **Target** — integer. Set to 0 or blank to **unbucket** the village (hidden
-    from dashboard until a target is set).
-- CSV-unknown villages (seen in an uploaded CSV but not in the master list)
-  appear in a separate section at the bottom, with a tehsil dropdown and target
-  input so you can bring them into the dashboard.
+1. Pick date + CSV, submit.
+2. If every village is already known → upload saves immediately.
+3. If any village is new → yellow confirmation card appears. For each new village:
+   tehsil dropdown (defaulted from the CSV), target input, pendency input.
+4. Click **Confirm & finalize upload** → the CSV saves and the villages commit to
+   `added_villages.json` in the same step.
 
-## Dashboard columns
-
-Tehsil-wise: Tehsil · Villages · Target · Total Issued · Issue % · Additions between · Approved · Approval %
-
-Village-wise (per tehsil): same minus the villages count, village name replaces tehsil name.
-
-## Not included (intentionally stripped from Bandipora)
-
-- Camp Director tabs, admin pages, data model
-- First Bucket badge/logic
-- "Started 20 Oct" / new-batch admin controls
-- Pending Entries Google Sheet integration
-
-## Local testing (optional)
-
-```bash
-pip install -r requirements.txt
-ADMIN_PASS=whatever python app.py
-```
-
-Open `http://localhost:5000`.
+No implicit additions — every new village enters with a tehsil + target that admin consciously
+chose.
