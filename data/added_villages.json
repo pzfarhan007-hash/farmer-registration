@@ -17,6 +17,12 @@
     "tehsil": "Kralpora",
     "village": "Dard Hari Khar Gund"
   },
+  "KUPWARA||DUDWAN": {
+    "pendency": 0,
+    "target": 1035,
+    "tehsil": "Kupwara",
+    "village": "Dudwan"
+  },
   "KUPWARA||GUNDSANAHHAIHAMA": {
     "pendency": 0,
     "target": 0,
