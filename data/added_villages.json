@@ -119,6 +119,12 @@
     "tehsil": "Qaziabad",
     "village": "Harveth"
   },
+  "QAZIABAD||KACHLOQAZIPORA": {
+    "pendency": 0,
+    "target": 726,
+    "tehsil": "Qaziabad",
+    "village": "Kachlo Qazipora"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
