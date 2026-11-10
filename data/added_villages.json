@@ -143,6 +143,12 @@
     "tehsil": "Qaziabad",
     "village": "Kral Pora"
   },
+  "QAZIABAD||KUNIL": {
+    "pendency": 0,
+    "target": 439,
+    "tehsil": "Qaziabad",
+    "village": "Kunil"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
