@@ -107,6 +107,12 @@
     "tehsil": "Qaziabad",
     "village": "Hajin"
   },
+  "QAZIABAD||HAMPORA": {
+    "pendency": 0,
+    "target": 786,
+    "tehsil": "Qaziabad",
+    "village": "Ham Pora"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
