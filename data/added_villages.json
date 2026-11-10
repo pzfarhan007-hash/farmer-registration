@@ -125,6 +125,12 @@
     "tehsil": "Qaziabad",
     "village": "Kachlo Qazipora"
   },
+  "QAZIABAD||KHAIPORA": {
+    "pendency": 0,
+    "target": 621,
+    "tehsil": "Qaziabad",
+    "village": "Khai Pora"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
