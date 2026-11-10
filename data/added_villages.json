@@ -5,6 +5,12 @@
     "tehsil": "Handwara",
     "village": "Jager Pora"
   },
+  "HANDWARA||WARIPORA": {
+    "pendency": 105,
+    "target": 105,
+    "tehsil": "Handwara",
+    "village": "Wari Pora"
+  },
   "KRALPORA||DARDHARIKHARGUND": {
     "pendency": 0,
     "target": 0,
