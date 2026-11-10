@@ -178,5 +178,11 @@
     "target": 0,
     "tehsil": "Qaziabad",
     "village": "Super Nagama"
+  },
+  "QAZIABAD||WANGAM": {
+    "pendency": 0,
+    "target": 279,
+    "tehsil": "Qaziabad",
+    "village": "Wangam"
   }
 }
