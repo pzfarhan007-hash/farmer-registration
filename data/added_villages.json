@@ -4,5 +4,11 @@
     "target": 0,
     "tehsil": "Handwara",
     "village": "Jager Pora"
+  },
+  "QAZIABAD||SUPERNAGAMA": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Qaziabad",
+    "village": "Super Nagama"
   }
 }
