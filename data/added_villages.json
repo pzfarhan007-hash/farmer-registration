@@ -89,6 +89,12 @@
     "tehsil": "Qaziabad",
     "village": "Gana Pora"
   },
+  "QAZIABAD||GUNDCHUBUTRA": {
+    "pendency": 0,
+    "target": 1237,
+    "tehsil": "Qaziabad",
+    "village": "Gund Chubutra"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
