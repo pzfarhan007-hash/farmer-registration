@@ -190,5 +190,11 @@
     "target": 279,
     "tehsil": "Qaziabad",
     "village": "Wangam"
+  },
+  "VILLGAM||WAVRIPORA": {
+    "pendency": 0,
+    "target": 540,
+    "tehsil": "Villgam",
+    "village": "Wavri Pora"
   }
 }
