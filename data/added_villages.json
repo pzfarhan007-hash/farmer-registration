@@ -95,6 +95,12 @@
     "tehsil": "Qaziabad",
     "village": "Gund Chubutra"
   },
+  "QAZIABAD||GUNDKAMAL": {
+    "pendency": 0,
+    "target": 474,
+    "tehsil": "Qaziabad",
+    "village": "Gund Kamal"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
