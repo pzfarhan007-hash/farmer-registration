@@ -113,6 +113,12 @@
     "tehsil": "Qaziabad",
     "village": "Ham Pora"
   },
+  "QAZIABAD||HARVETH": {
+    "pendency": 0,
+    "target": 524,
+    "tehsil": "Qaziabad",
+    "village": "Harveth"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
