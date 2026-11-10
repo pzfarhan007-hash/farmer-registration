@@ -181,7 +181,6 @@
             <th>#</th><th>Tehsil</th>
             <th class="num" style="white-space:normal;max-width:70px">Villages</th>
             <th class="num" style="white-space:normal;max-width:120px">Target</th>
-            <th class="num" style="white-space:normal;max-width:95px;background:#fdf4ec;color:#92400e">Pendency</th>
             <th class="num" style="white-space:normal;max-width:95px">Total Issued</th>
             <th>Issue %</th>
             <th class="num" id="tehsilAddRangeHdr" style="white-space:normal;max-width:100px;background:#fff8ee;color:#a86416">Additions between</th>
@@ -209,7 +208,6 @@
           <thead><tr>
             <th>#</th><th>Village</th>
             <th class="num">Target</th>
-            <th class="num" style="background:#fdf4ec;color:#92400e">Pendency</th>
             <th class="num">Total Issued</th>
             <th>Issue %</th>
             <th class="num" id="villageAddRangeHdr" style="white-space:normal;max-width:100px;background:#fff8ee;color:#a86416">Additions between</th>
@@ -288,14 +286,12 @@ function renderTehsils(){
   });
   for(var i=0;i<tehsils.length;i++){
     var t=tehsils[i]; var ar=tehsilAddInRange(t,addFrom,addTo); totAR+=ar;
-    var tp = t.pendency || 0;
     var safe=t.tehsil.replace(/'/g,"\\'");
     body+='<tr class="clickable" onclick="showVillages(\''+safe+'\')">'
         +'<td>'+(i+1)+'</td>'
         +'<td><strong>'+esc(t.tehsil)+'</strong></td>'
         +'<td class="num">'+t.villages.length+'</td>'
         +'<td class="num">'+t.target.toLocaleString()+'</td>'
-        +'<td class="num" style="color:#92400e;background:#fdf4ec">'+tp.toLocaleString()+'</td>'
         +'<td class="num"><strong>'+t.issued.toLocaleString()+'</strong></td>'
         +'<td style="text-align:center">'+pctCircle(t.issued,t.target)+'</td>'
         +'<td class="num" style="color:#a86416;background:#fff8ee">'+ar.toLocaleString()+'</td>'
@@ -303,13 +299,12 @@ function renderTehsils(){
         +'<td style="text-align:center">'+pctCircle(t.approved,t.issued)+'</td>'
         +'</tr>';
   }
-  var gT=0,gP=0,gI=0,gA=0,gV=0;
-  for(var i=0;i<DATA.tehsils.length;i++){ var t=DATA.tehsils[i]; gT+=t.target;gP+=(t.pendency||0);gI+=t.issued;gA+=t.approved;gV+=t.villages.length; }
+  var gT=0,gI=0,gA=0,gV=0;
+  for(var i=0;i<DATA.tehsils.length;i++){ var t=DATA.tehsils[i]; gT+=t.target;gI+=t.issued;gA+=t.approved;gV+=t.villages.length; }
   document.querySelector('#tehsilTable tbody').innerHTML=body;
   document.querySelector('#tehsilTable tfoot').innerHTML='<tr><td colspan="2">TOTAL</td>'
     +'<td class="num">'+gV+'</td>'
     +'<td class="num">'+gT.toLocaleString()+'</td>'
-    +'<td class="num" style="color:#92400e;background:#fdf4ec"><strong>'+gP.toLocaleString()+'</strong></td>'
     +'<td class="num"><strong>'+gI.toLocaleString()+'</strong></td>'
     +'<td style="text-align:center">'+pctCircle(gI,gT)+'</td>'
     +'<td class="num" style="color:#a86416;background:#fff8ee"><strong>'+totAR.toLocaleString()+'</strong></td>'
@@ -328,22 +323,18 @@ function renderVillages(tehsilName){
   var body='',totAR=0;
   for(var j=0;j<vs.length;j++){
     var v=vs[j]; var ar=villageAddInRange(v,addFrom,addTo); totAR+=ar;
-    var vp = v.pendency || 0;
     body+='<tr><td>'+(j+1)+'</td>'
         +'<td><strong>'+esc(v.village)+'</strong></td>'
         +'<td class="num">'+v.target.toLocaleString()+'</td>'
-        +'<td class="num" style="color:#92400e;background:#fdf4ec">'+vp.toLocaleString()+'</td>'
         +'<td class="num"><strong>'+v.issued.toLocaleString()+'</strong></td>'
         +'<td>'+pctBar(v.issued,v.target)+'</td>'
         +'<td class="num" style="color:#a86416;background:#fff8ee">'+ar.toLocaleString()+'</td>'
         +'<td class="num">'+v.approved.toLocaleString()+'</td>'
         +'<td>'+pctBar(v.approved,v.issued)+'</td></tr>';
   }
-  var tp = t.pendency || 0;
   document.querySelector('#villageTable tbody').innerHTML=body;
   document.querySelector('#villageTable tfoot').innerHTML='<tr><td colspan="2">TOTAL</td>'
     +'<td class="num">'+t.target.toLocaleString()+'</td>'
-    +'<td class="num" style="color:#92400e;background:#fdf4ec"><strong>'+tp.toLocaleString()+'</strong></td>'
     +'<td class="num"><strong>'+t.issued.toLocaleString()+'</strong></td>'
     +'<td>'+pctBar(t.issued,t.target)+'</td>'
     +'<td class="num" style="color:#a86416;background:#fff8ee"><strong>'+totAR.toLocaleString()+'</strong></td>'

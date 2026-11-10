@@ -63,7 +63,6 @@
           <th>Village (from CSV)</th>
           <th>Assign to tehsil</th>
           <th style="text-align:right">Target</th>
-          <th style="text-align:right">Pendency</th>
         </tr></thead>
         <tbody>
           {% for nv in pending.new_villages %}
@@ -79,9 +78,6 @@
               </td>
               <td style="text-align:right">
                 <input type="number" name="new_target::{{ nv.key }}" value="0" min="0" step="1">
-              </td>
-              <td style="text-align:right">
-                <input type="number" name="new_pendency::{{ nv.key }}" value="0" min="0" step="1">
               </td>
             </tr>
           {% endfor %}

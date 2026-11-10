@@ -66,8 +66,8 @@
   <h3 style="color:#15803d;">Add a new village</h3>
   <p class="mut">
     Use this to add a village that is bucketed but has not shown up in any CSV yet. Pick the tehsil,
-    type the village name, set target + pendency. For villages that are in the CSV but need a target
-    set, use the inline inputs in the tehsil tables below.
+    type the village name, set target. For villages that are in the CSV but need a target set,
+    use the inline inputs in the tehsil tables below.
   </p>
   <form method="POST" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
     <input type="hidden" name="action" value="add_village">
@@ -87,10 +87,6 @@
       <label style="font-size:11px; color:#64748b; display:block; margin-bottom:4px;">TARGET</label>
       <input type="number" name="new_target" value="0" min="0" step="1" style="width:90px;">
     </div>
-    <div>
-      <label style="font-size:11px; color:#92400e; display:block; margin-bottom:4px;">PENDENCY</label>
-      <input type="number" name="new_pendency" value="0" min="0" step="1" style="width:90px;">
-    </div>
     <button type="submit" class="btn" style="background:#15803d;">Add village</button>
   </form>
 </div>
@@ -101,13 +97,12 @@
     <strong>{{ total_rows }}</strong> villages ·
     <span class="bucketed-count">{{ total_bucketed }} bucketed</span> ·
     <span class="unbucketed-count">{{ total_unbucketed }} unbucketed</span> ·
-    <strong>{{ "{:,}".format(total_target) }}</strong> total target ·
-    <strong style="color:#92400e">{{ "{:,}".format(total_pendency) }}</strong> total pendency
+    <strong>{{ "{:,}".format(total_target) }}</strong> total target
   </div>
   <p class="mut" style="margin-top:10px;">
-    Every village in the tables below appears on the dashboard, regardless of target. Set targets +
-    pendency here. Use <strong>Delete</strong> for one-off cleanup (deleted villages are restorable
-    from the Deleted section at the bottom).
+    Every village in the tables below appears on the dashboard, regardless of target. Set targets
+    here. Use <strong>Delete</strong> for one-off cleanup (deleted villages are restorable from the
+    Deleted section at the bottom).
   </p>
 </div>
 
@@ -129,7 +124,6 @@
       <thead><tr>
         <th>Village</th>
         <th class="num" style="text-align:right">Target</th>
-        <th class="num" style="text-align:right;background:#fdf4ec;color:#92400e">Pendency</th>
         <th style="text-align:center">Status</th>
         <th style="text-align:center">Delete</th>
       </tr></thead>
@@ -144,9 +138,6 @@
             </td>
             <td style="text-align:right">
               <input type="number" name="target::{{ r.key }}" value="{{ r.target }}" min="0" step="1">
-            </td>
-            <td style="text-align:right;background:#fdf4ec">
-              <input type="number" name="pendency::{{ r.key }}" value="{{ r.pendency }}" min="0" step="1">
             </td>
             <td style="text-align:center">
               {% if r.unbucketed %}<span class="tag unbkt">Unbucketed</span>
@@ -180,7 +171,6 @@
     <thead><tr>
       <th>Village</th><th>Tehsil</th>
       <th class="num" style="text-align:right">Target</th>
-      <th class="num" style="text-align:right;background:#fdf4ec;color:#92400e">Pendency</th>
       <th style="text-align:center">Restore</th>
     </tr></thead>
     <tbody>
@@ -191,7 +181,6 @@
           </td>
           <td>{{ r.tehsil or '—' }}</td>
           <td style="text-align:right">{{ r.target }}</td>
-          <td style="text-align:right">{{ r.pendency }}</td>
           <td style="text-align:center">
             <form method="POST" style="display:inline;">
               <input type="hidden" name="action" value="restore_village">
