@@ -1005,12 +1005,12 @@ def download_csv():
     import io
     state = build_nested_structure()
     buf = io.StringIO(); w = csv.writer(buf)
-    w.writerow(["Tehsil", "Village", "Target", "Pendency", "Total Issued",
+    w.writerow(["Tehsil", "Village", "Target", "Total Issued",
                 "Additions this month", "Issue %", "Approved", "Approval %"])
     for t in state["tehsils"]:
         for v in t["villages"]:
             additions = v["issued"] - v["issuedBaseline"]
-            w.writerow([t["tehsil"], v["village"], v["target"], v.get("pendency", 0),
+            w.writerow([t["tehsil"], v["village"], v["target"],
                         v["issued"], additions, _pct(v["issued"], v["target"]),
                         v["approved"], _pct(v["approved"], v["issued"])])
     today = datetime.utcnow().strftime("%Y-%m-%d")
@@ -1048,25 +1048,25 @@ def download_xlsx():
         ws.freeze_panes = "A2"
 
     ws = wb.active; ws.title = "Tehsil Summary"
-    headers = ["#", "Tehsil", "Villages", "Target", "Pendency", "Total Issued",
+    headers = ["#", "Tehsil", "Villages", "Target", "Total Issued",
                "Additions this month", "Issue %", "Approved", "Approval %"]
-    rows = []; gT=gP=gI=gA=gAdd=0
+    rows = []; gT=gI=gA=gAdd=0
     for i, t in enumerate(sorted(state["tehsils"], key=lambda t: -t["issued"]), 1):
-        adds = t["issued"] - t["issuedBaseline"]; tp = t.get("pendency", 0)
-        rows.append([i, t["tehsil"], len(t["villages"]), t["target"], tp, t["issued"],
+        adds = t["issued"] - t["issuedBaseline"]
+        rows.append([i, t["tehsil"], len(t["villages"]), t["target"], t["issued"],
                      adds, _pct(t["issued"], t["target"]), t["approved"], _pct(t["approved"], t["issued"])])
-        gT += t["target"]; gP += tp; gI += t["issued"]; gA += t["approved"]; gAdd += adds
-    totals = ["", "TOTAL", "", gT, gP, gI, gAdd, _pct(gI, gT), gA, _pct(gA, gI)]
+        gT += t["target"]; gI += t["issued"]; gA += t["approved"]; gAdd += adds
+    totals = ["", "TOTAL", "", gT, gI, gAdd, _pct(gI, gT), gA, _pct(gA, gI)]
     write_sheet(ws, headers, rows, totals)
 
     ws = wb.create_sheet("Village Details")
-    headers = ["#", "Tehsil", "Village", "Target", "Pendency", "Total Issued",
+    headers = ["#", "Tehsil", "Village", "Target", "Total Issued",
                "Additions this month", "Issue %", "Approved", "Approval %"]
     rows = []; n = 1
     for t in state["tehsils"]:
         for v in t["villages"]:
             adds = v["issued"] - v["issuedBaseline"]
-            rows.append([n, t["tehsil"], v["village"], v["target"], v.get("pendency", 0),
+            rows.append([n, t["tehsil"], v["village"], v["target"],
                          v["issued"], adds, _pct(v["issued"], v["target"]),
                          v["approved"], _pct(v["approved"], v["issued"])])
             n += 1
