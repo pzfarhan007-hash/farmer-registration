@@ -83,6 +83,12 @@
     "tehsil": "Qaziabad",
     "village": "Deedar Pora"
   },
+  "QAZIABAD||GANAPORA": {
+    "pendency": 0,
+    "target": 798,
+    "tehsil": "Qaziabad",
+    "village": "Gana Pora"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
