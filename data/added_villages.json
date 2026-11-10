@@ -149,6 +149,12 @@
     "tehsil": "Qaziabad",
     "village": "Kunil"
   },
+  "QAZIABAD||LOKIPORA": {
+    "pendency": 0,
+    "target": 1008,
+    "tehsil": "Qaziabad",
+    "village": "Loki Pora"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
