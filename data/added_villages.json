@@ -59,6 +59,12 @@
     "tehsil": "Langate",
     "village": "Kohru"
   },
+  "LANGATE||UDIPORA": {
+    "pendency": 0,
+    "target": 785,
+    "tehsil": "Langate",
+    "village": "Udi Pora"
+  },
   "QALAMABAD||SHATGUNDBALA": {
     "pendency": 0,
     "target": 0,
