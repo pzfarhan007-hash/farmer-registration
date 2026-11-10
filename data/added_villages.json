@@ -11,6 +11,12 @@
     "tehsil": "Handwara",
     "village": "Wari Pora"
   },
+  "KERAN||BITCHWAL": {
+    "pendency": 0,
+    "target": 73,
+    "tehsil": "Keran",
+    "village": "Bitchwal"
+  },
   "KRALPORA||DARDHARIKHARGUND": {
     "pendency": 0,
     "target": 0,
