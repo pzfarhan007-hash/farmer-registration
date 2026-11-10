@@ -131,6 +131,12 @@
     "tehsil": "Qaziabad",
     "village": "Khai Pora"
   },
+  "QAZIABAD||KHANAGUND": {
+    "pendency": 0,
+    "target": 251,
+    "tehsil": "Qaziabad",
+    "village": "Khana Gund"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
