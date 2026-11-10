@@ -71,6 +71,12 @@
     "tehsil": "Qaziabad",
     "village": "Ash Pora"
   },
+  "QAZIABAD||BADHBUGH": {
+    "pendency": 0,
+    "target": 352,
+    "tehsil": "Qaziabad",
+    "village": "Badh Bugh"
+  },
   "QAZIABAD||DEEDARPORA": {
     "pendency": 0,
     "target": 0,
