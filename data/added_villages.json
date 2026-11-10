@@ -155,6 +155,12 @@
     "tehsil": "Qaziabad",
     "village": "Loki Pora"
   },
+  "QAZIABAD||PANDITHPORA": {
+    "pendency": 0,
+    "target": 996,
+    "tehsil": "Qaziabad",
+    "village": "Pandith Pora"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
