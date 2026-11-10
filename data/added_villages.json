@@ -137,6 +137,12 @@
     "tehsil": "Qaziabad",
     "village": "Khana Gund"
   },
+  "QAZIABAD||KRALPORA": {
+    "pendency": 0,
+    "target": 603,
+    "tehsil": "Qaziabad",
+    "village": "Kral Pora"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
