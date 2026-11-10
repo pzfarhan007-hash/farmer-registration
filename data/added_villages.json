@@ -101,6 +101,12 @@
     "tehsil": "Qaziabad",
     "village": "Gund Kamal"
   },
+  "QAZIABAD||HAJIN": {
+    "pendency": 0,
+    "target": 615,
+    "tehsil": "Qaziabad",
+    "village": "Hajin"
+  },
   "QAZIABAD||SUPERNAGAMA": {
     "pendency": 0,
     "target": 0,
