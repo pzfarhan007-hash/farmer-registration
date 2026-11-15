@@ -41,6 +41,12 @@
     "tehsil": "Kupwara",
     "village": "Gushi"
   },
+  "KUPWARA||HATMULLA": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Hat Mulla"
+  },
   "KUPWARA||PAZIPORA": {
     "pendency": 0,
     "target": 0,
@@ -59,11 +65,23 @@
     "tehsil": "Kupwara",
     "village": "Regipora"
   },
+  "KUPWARA||TIKKER": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Tikker"
+  },
   "LANGATE||KOHRU": {
     "pendency": 0,
     "target": 0,
     "tehsil": "Langate",
     "village": "Kohru"
+  },
+  "LANGATE||POHRUPETH": {
+    "pendency": 0,
+    "target": 1135,
+    "tehsil": "Langate",
+    "village": "Pohrupeth"
   },
   "LANGATE||UDIPORA": {
     "pendency": 0,
