@@ -59,6 +59,12 @@
     "tehsil": "Kupwara",
     "village": "Hat Mulla"
   },
+  "KUPWARA||MUGALPORA": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Mugal Pora"
+  },
   "KUPWARA||PAZIPORA": {
     "pendency": 0,
     "target": 0,
