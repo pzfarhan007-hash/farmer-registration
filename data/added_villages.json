@@ -23,11 +23,23 @@
     "tehsil": "Kralpora",
     "village": "Dard Hari Khar Gund"
   },
+  "KUPWARA||BATAPORAHAIHAMA": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Batapora Haihama"
+  },
   "KUPWARA||DUDWAN": {
     "pendency": 0,
     "target": 1035,
     "tehsil": "Kupwara",
     "village": "Dudwan"
+  },
+  "KUPWARA||GULGAM": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Gulgam"
   },
   "KUPWARA||GUNDSANAHHAIHAMA": {
     "pendency": 0,
@@ -214,6 +226,12 @@
     "target": 279,
     "tehsil": "Qaziabad",
     "village": "Wangam"
+  },
+  "RAMHAL||AMARGARAH": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Ramhal",
+    "village": "Amar Garah"
   },
   "VILLGAM||WAVRIPORA": {
     "pendency": 0,
