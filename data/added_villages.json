@@ -29,6 +29,12 @@
     "tehsil": "Kupwara",
     "village": "Batapora Haihama"
   },
+  "KUPWARA||CHERKOOTE": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Cher Koote"
+  },
   "KUPWARA||DUDWAN": {
     "pendency": 0,
     "target": 1035,
@@ -58,6 +64,12 @@
     "target": 0,
     "tehsil": "Kupwara",
     "village": "Hat Mulla"
+  },
+  "KUPWARA||KHUMRIYAL": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Khumriyal"
   },
   "KUPWARA||MUGALPORA": {
     "pendency": 0,
