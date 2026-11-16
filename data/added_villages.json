@@ -221,6 +221,12 @@
     "tehsil": "Qaziabad",
     "village": "Loki Pora"
   },
+  "QAZIABAD||PALAPORA": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Qaziabad",
+    "village": "Pala Pora"
+  },
   "QAZIABAD||PANDITHPORA": {
     "pendency": 0,
     "target": 996,
