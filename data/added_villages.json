@@ -83,6 +83,12 @@
     "tehsil": "Kupwara",
     "village": "Regipora"
   },
+  "KUPWARA||SULKOOTE": {
+    "pendency": 0,
+    "target": 0,
+    "tehsil": "Kupwara",
+    "village": "Sulkoote"
+  },
   "KUPWARA||TIKKER": {
     "pendency": 0,
     "target": 0,
